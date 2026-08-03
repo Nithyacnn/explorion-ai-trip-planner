@@ -174,11 +174,11 @@ const SLOT_META = [
 
 function parseDays(text: string): number {
   const digit = text.match(/(\d+)\s*(?:days?|nights?|d\b)/i);
-  if (digit) return clamp(parseInt(digit[1], 10), 1, 7);
+  if (digit?.[1]) return clamp(parseInt(digit[1], 10), 1, 7);
   const word = text.match(
     /\b(one|two|three|four|five|six|seven)\s*(?:days?|nights?)/i,
   );
-  if (word) return NUM_WORDS[word[1].toLowerCase()];
+  if (word?.[1]) return NUM_WORDS[word[1].toLowerCase()] ?? 3;
   if (/weekend/i.test(text)) return 2;
   return 3;
 }
@@ -192,9 +192,9 @@ function parseBudget(text: string, days: number): number {
       const g = raw
         .replace(/,/g, "")
         .match(/(?:₹|rs\.?|inr)\s*(\d+(?:\.\d+)?)\s*(k|thousand|lakh|l\b)?/i);
-      if (g) return scale(parseFloat(g[1]), g[2]);
+      if (g?.[1]) return scale(parseFloat(g[1]), g[2]);
       const k = raw.match(/(\d+(?:\.\d+)?)\s*(k|thousand|lakh)/i);
-      if (k) return scale(parseFloat(k[1]), k[2]);
+      if (k?.[1]) return scale(parseFloat(k[1]), k[2]);
     }
   }
   return days * 7000;
@@ -208,9 +208,9 @@ function scale(n: number, unit?: string): number {
 }
 
 function parseMonth(text: string): string {
-  const found = MONTHS.find((m) => text.toLowerCase().includes(m.slice(0, 3)) && text.toLowerCase().includes(m.slice(0, 4)));
-  const loose = MONTHS.find((m) => new RegExp(`\\b${m.slice(0, 3)}[a-z]*\\b`, "i").test(text));
-  const name = found ?? loose;
+  const name = MONTHS.find((m) =>
+    new RegExp(`\\b${m.slice(0, 3)}[a-z]*\\b`, "i").test(text),
+  );
   return name ? name[0].toUpperCase() + name.slice(1) : "Flexible dates";
 }
 
@@ -231,7 +231,7 @@ export function planTrip(prompt: string): TripPlan {
   const seasonBump = /dec|jan|oct|nov/i.test(month) ? 1.18 : 1;
 
   const itinerary: DayPlan[] = Array.from({ length: days }, (_, i) => {
-    const spots = dest.spots[i % dest.spots.length];
+    const spots = dest.spots[i % dest.spots.length] ?? FALLBACK.spots[0]!;
     return {
       day: i + 1,
       title:
@@ -243,7 +243,7 @@ export function planTrip(prompt: string): TripPlan {
       slots: SLOT_META.map((meta, j) => ({
         label: meta.label,
         tag: meta.tag,
-        activity: spots[j],
+        activity: spots[j] ?? "Free time to explore",
       })),
     };
   });
