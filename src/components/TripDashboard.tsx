@@ -67,24 +67,37 @@ export function TripDashboard({ plan }: { plan: TripPlan }) {
 
           <div className="mt-5 space-y-4">
             {[
-              { icon: TrainFront, ...plan.transport.train, note: "Slower, easiest on budget" },
-              { icon: Plane, ...plan.transport.flight, note: "Fastest, book 3+ weeks ahead" },
+              {
+                icon: TrainFront,
+                ...plan.transport.train,
+                note: "Slower, easiest on budget",
+              },
+              {
+                icon: Plane,
+                ...plan.transport.flight,
+                note: "Fastest, book 3+ weeks ahead",
+              },
             ].map((t) => (
               <div
                 key={t.label}
-                className="rounded-xl border border-current/10 bg-black/[0.03] p-4"
+                className="flex items-center gap-4 rounded-xl border border-current/10 bg-black/[0.03] p-4"
               >
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  <t.icon className="size-4" />
-                  {t.label}
+                <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                  <t.icon className="size-5" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider opacity-70">
+                    {t.label}
+                  </p>
+                  <p className="mt-0.5 inline-flex rounded-lg bg-primary/15 px-2.5 py-1 text-lg font-semibold tabular-nums tracking-tight">
+                    {formatINR(t.min)} – {formatINR(t.max)}
+                  </p>
+                  <p className="mt-1 text-xs opacity-70">{t.note}</p>
                 </div>
-                <p className="mt-2 text-2xl font-semibold tracking-tight">
-                  {formatINR(t.min)} – {formatINR(t.max)}
-                </p>
-                <p className="mt-1 text-xs opacity-70">{t.note}</p>
               </div>
             ))}
           </div>
+
         </section>
 
         {/* Itinerary */}
