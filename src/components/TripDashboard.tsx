@@ -1,0 +1,122 @@
+import { useMemo } from "react";
+import { Plane, TrainFront, Sun, Sunset, Moon, Wallet } from "lucide-react";
+import { formatINR, type TripPlan } from "@/lib/trip-planner";
+
+const slotIcons = [Sun, Sunset, Moon];
+
+export function TripDashboard({ plan }: { plan: TripPlan }) {
+  const maxPct = useMemo(
+    () => Math.max(...plan.budgetBreakdown.map((b) => b.pct)),
+    [plan],
+  );
+
+  return (
+    <div className="space-y-8">
+      <header className="space-y-2">
+        <p className="text-xs uppercase tracking-[0.35em] text-primary">Your plan</p>
+        <h2 className="font-display text-4xl text-foreground sm:text-5xl">
+          {plan.days} days in {plan.destination}
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          {plan.month} · Budget {formatINR(plan.budget)} · {plan.itinerary.length}-day
+          itinerary
+        </p>
+      </header>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Transport */}
+        <section className="card-ivory p-6 lg:col-span-1">
+          <h3 className="font-display text-xl">Transport estimates</h3>
+          <p className="mt-1 text-xs opacity-70">Round-trip, per person</p>
+
+          <div className="mt-5 space-y-4">
+            {[
+              { icon: TrainFront, ...plan.transport.train, note: "Slower, easiest on budget" },
+              { icon: Plane, ...plan.transport.flight, note: "Fastest, book 3+ weeks ahead" },
+            ].map((t) => (
+              <div
+                key={t.label}
+                className="rounded-xl border border-current/10 bg-black/[0.03] p-4"
+              >
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <t.icon className="size-4" />
+                  {t.label}
+                </div>
+                <p className="mt-2 text-2xl font-semibold tracking-tight">
+                  {formatINR(t.min)} – {formatINR(t.max)}
+                </p>
+                <p className="mt-1 text-xs opacity-70">{t.note}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Itinerary */}
+        <section className="panel-navy p-6 lg:col-span-2">
+          <h3 className="font-display text-xl text-foreground">Day-by-day itinerary</h3>
+          <ol className="mt-5 space-y-5 border-l border-border pl-6">
+            {plan.itinerary.map((day) => (
+              <li key={day.day} className="relative">
+                <span className="absolute -left-[31px] top-1 flex size-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
+                  {day.day}
+                </span>
+                <div className="card-ivory p-4">
+                  <p className="text-sm font-semibold">
+                    Day {day.day} · {day.title}
+                  </p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    {day.slots.map((slot, i) => {
+                      const Icon = slotIcons[i] ?? Sun;
+                      return (
+                        <div
+                          key={slot.label}
+                          className="rounded-lg border border-current/10 bg-black/[0.03] p-3"
+                        >
+                          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider opacity-70">
+                            <Icon className="size-3" />
+                            {slot.label}
+                          </div>
+                          <p className="mt-1 text-sm leading-snug">{slot.activity}</p>
+                          <p className="mt-1 text-[11px] opacity-60">{slot.tag}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+      </div>
+
+      {/* Budget */}
+      <section className="card-ivory p-6">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <h3 className="font-display flex items-center gap-2 text-xl">
+            <Wallet className="size-5" /> Budget breakdown
+          </h3>
+          <p className="text-sm opacity-70">Total {formatINR(plan.budget)}</p>
+        </div>
+
+        <div className="mt-6 grid gap-5 sm:grid-cols-2">
+          {plan.budgetBreakdown.map((b) => (
+            <div key={b.label}>
+              <div className="flex items-baseline justify-between text-sm">
+                <span className="font-semibold">{b.label}</span>
+                <span className="tabular-nums opacity-80">
+                  {formatINR(b.amount)} · {b.pct}%
+                </span>
+              </div>
+              <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-black/10">
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-700 ease-out"
+                  style={{ width: `${(b.pct / maxPct) * 100}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
