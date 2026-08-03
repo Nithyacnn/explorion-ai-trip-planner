@@ -211,7 +211,7 @@ function parseMonth(text: string): string {
   const name = MONTHS.find((m) =>
     new RegExp(`\\b${m.slice(0, 3)}[a-z]*\\b`, "i").test(text),
   );
-  return name ? name[0].toUpperCase() + name.slice(1) : "Flexible dates";
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : "Flexible dates";
 }
 
 function clamp(n: number, min: number, max: number) {
