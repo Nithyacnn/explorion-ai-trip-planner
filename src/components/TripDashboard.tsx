@@ -1,26 +1,62 @@
-import { useMemo } from "react";
-import { Plane, TrainFront, Sun, Sunset, Moon, Wallet } from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  Plane,
+  TrainFront,
+  Sun,
+  Sunset,
+  Moon,
+  Wallet,
+  Bookmark,
+  Check,
+} from "lucide-react";
 import { formatINR, type TripPlan } from "@/lib/trip-planner";
 
 const slotIcons = [Sun, Sunset, Moon];
 
+const STORAGE_KEY = "explorion.saved-trips";
+
 export function TripDashboard({ plan }: { plan: TripPlan }) {
+  const [saved, setSaved] = useState(false);
+
   const maxPct = useMemo(
     () => Math.max(...plan.budgetBreakdown.map((b) => b.pct)),
     [plan],
   );
 
+  const saveTrip = () => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      const list: unknown[] = raw ? JSON.parse(raw) : [];
+      list.unshift({ savedAt: new Date().toISOString(), plan });
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list.slice(0, 20)));
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2200);
+    } catch {
+      /* storage unavailable */
+    }
+  };
+
   return (
-    <div className="space-y-8">
-      <header className="space-y-2">
-        <p className="text-xs uppercase tracking-[0.35em] text-primary">Your plan</p>
-        <h2 className="font-display text-4xl text-foreground sm:text-5xl">
-          {plan.days} days in {plan.destination}
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          {plan.month} · Budget {formatINR(plan.budget)} · {plan.itinerary.length}-day
-          itinerary
-        </p>
+    <div key={`${plan.destination}-${plan.days}-${plan.budget}-${plan.month}`} className="fade-rise space-y-8">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div className="space-y-2">
+          <p className="text-xs uppercase tracking-[0.35em] text-primary">Your plan</p>
+          <h2 className="font-display text-4xl text-foreground sm:text-5xl">
+            {plan.days} days in {plan.destination}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {plan.month} · Budget {formatINR(plan.budget)} · {plan.itinerary.length}-day
+            itinerary
+          </p>
+        </div>
+        <button
+          onClick={saveTrip}
+          aria-live="polite"
+          className="inline-flex items-center gap-2 rounded-xl border border-primary px-4 py-2.5 text-sm font-semibold text-primary transition hover:bg-primary hover:text-primary-foreground active:scale-[0.98]"
+        >
+          {saved ? <Check className="size-4" /> : <Bookmark className="size-4" />}
+          {saved ? "Trip saved" : "Save Trip"}
+        </button>
       </header>
 
       <div className="grid gap-6 lg:grid-cols-3">
