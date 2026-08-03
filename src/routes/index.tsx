@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { Compass, ArrowRight, Sparkles } from "lucide-react";
+import { useServerFn } from "@tanstack/react-start";
+import { Compass, ArrowRight, Sparkles, Loader2 } from "lucide-react";
+import { generateTripPlan } from "@/lib/trip-ai.functions";
 import { planTrip, destinationVibe, type TripPlan } from "@/lib/trip-planner";
 import { TripDashboard } from "@/components/TripDashboard";
 
@@ -36,8 +38,27 @@ const CHIPS = [
 function Home() {
   const [prompt, setPrompt] = useState("");
   const [plan, setPlan] = useState<TripPlan | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const askAi = useServerFn(generateTripPlan);
 
-  const handlePlan = () => setPlan(planTrip(prompt));
+  const handlePlan = async () => {
+    const text = prompt.trim();
+    if (!text || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const aiPlan = await askAi({ data: { prompt: text } });
+      setPlan(aiPlan);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not reach the AI — showing an estimate.",
+      );
+      setPlan(planTrip(text));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen">
@@ -87,9 +108,18 @@ function Home() {
               <p className="text-xs text-muted-foreground">Tip: press ⌘/Ctrl + Enter</p>
               <button
                 onClick={handlePlan}
-                className="brass-glow inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition hover:brightness-110 active:scale-[0.98]"
+                disabled={loading || !prompt.trim()}
+                className="brass-glow inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
               >
-                Plan My Trip <ArrowRight className="size-4" />
+                {loading ? (
+                  <>
+                    Planning with AI <Loader2 className="size-4 animate-spin" />
+                  </>
+                ) : (
+                  <>
+                    Plan My Trip <ArrowRight className="size-4" />
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -107,10 +137,22 @@ function Home() {
           </div>
         </section>
 
-        {plan ? (
+        {error ? (
+          <p className="mb-4 rounded-xl border border-border px-4 py-3 text-xs text-muted-foreground">
+            {error}
+          </p>
+        ) : null}
+
+        {loading && !plan ? (
+          <section className="panel-navy mt-6 flex items-center gap-3 p-8 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin text-primary" /> Explorion AI is designing
+            your trip…
+          </section>
+        ) : plan ? (
           <section className="border-t border-border pt-12">
             <p className="mb-6 text-sm text-muted-foreground">
-              {destinationVibe(plan.destination)}
+              {plan.vibe ?? destinationVibe(plan.destination)}
+              {plan.style ? ` · ${plan.style} style` : ""}
             </p>
             <TripDashboard plan={plan} />
           </section>

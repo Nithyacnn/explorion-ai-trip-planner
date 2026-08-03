@@ -12,6 +12,8 @@ export type TripPlan = {
   };
   itinerary: DayPlan[];
   budgetBreakdown: { label: string; amount: number; pct: number }[];
+  style?: string;
+  vibe?: string;
 };
 
 type Dest = {
