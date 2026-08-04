@@ -207,7 +207,9 @@ export function TripDashboard({ plan }: { plan: TripPlan }) {
             </div>
           ))}
         </div>
+        <p className="mt-5 text-[11px] opacity-60">{AI_CAPTION}</p>
       </section>
+
     </div>
   );
 }
