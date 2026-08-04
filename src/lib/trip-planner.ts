@@ -283,7 +283,9 @@ export function planTrip(prompt: string): TripPlan {
 
   return {
     destination: dest.name,
-    days,
+    origin: null,
+    needsOrigin: false,
+
     budget,
     month,
     transport: {
