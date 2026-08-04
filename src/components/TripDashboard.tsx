@@ -185,6 +185,9 @@ export function TripDashboard({ plan }: { plan: TripPlan }) {
           </h3>
           <p className="text-sm opacity-70">Total {formatINR(plan.budget)}</p>
         </div>
+        <AgentTag label={plan.agentLabels?.budget} />
+
+
 
         <div className="mt-6 grid gap-5 sm:grid-cols-2">
           {plan.budgetBreakdown.map((b) => (
