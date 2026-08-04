@@ -8,12 +8,26 @@ import {
   Wallet,
   Bookmark,
   Check,
+  BedDouble,
+  Sparkles,
 } from "lucide-react";
 import { formatINR, type TripPlan } from "@/lib/trip-planner";
 
 const slotIcons = [Sun, Sunset, Moon];
 
 const STORAGE_KEY = "explorion.saved-trips";
+
+const AI_CAPTION = "AI-estimated ranges, not live pricing.";
+
+function AgentTag({ label }: { label?: string }) {
+  if (!label) return null;
+  return (
+    <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary">
+      <Sparkles className="size-3" /> Curated by {label}
+    </span>
+  );
+}
+
 
 export function TripDashboard({ plan }: { plan: TripPlan }) {
   const [saved, setSaved] = useState(false);
