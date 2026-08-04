@@ -115,13 +115,34 @@ export function TripDashboard({ plan }: { plan: TripPlan }) {
               </div>
             ))}
           </div>
+          <p className="mt-4 text-[11px] opacity-60">{AI_CAPTION}</p>
 
+          {plan.stay ? (
+            <div className="mt-6 border-t border-current/10 pt-5">
+              <h3 className="font-display flex items-center gap-2 text-xl">
+                <BedDouble className="size-5" /> Where to stay
+              </h3>
+              <AgentTag label={plan.agentLabels?.stay} />
+              <div className="mt-3 rounded-xl border border-current/10 bg-black/[0.03] p-4">
+                <p className="text-sm font-semibold">{plan.stay.name}</p>
+                <p className="mt-0.5 text-xs uppercase tracking-wider opacity-70">
+                  {plan.stay.type}
+                </p>
+                <p className="mt-2 inline-flex rounded-lg bg-primary/15 px-2.5 py-1 text-base font-semibold tabular-nums">
+                  {formatINR(plan.stay.pricePerNight)} / night
+                </p>
+                <p className="mt-2 text-xs leading-snug opacity-75">{plan.stay.why}</p>
+              </div>
+            </div>
+          ) : null}
         </section>
 
         {/* Itinerary */}
         <section className="panel-navy p-6 lg:col-span-2">
           <h3 className="font-display text-xl text-foreground">Day-by-day itinerary</h3>
+          <AgentTag label={plan.agentLabels?.itinerary} />
           <ol className="mt-5 space-y-5 border-l border-border pl-6">
+
             {plan.itinerary.map((day) => (
               <li key={day.day} className="relative">
                 <span className="absolute -left-[31px] top-1 flex size-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
