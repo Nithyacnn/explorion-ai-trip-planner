@@ -59,6 +59,7 @@ export function TripDashboard({ plan }: { plan: TripPlan }) {
             {plan.days} days in {plan.destination}
           </h2>
           <p className="text-sm text-muted-foreground">
+            {plan.origin ? `${plan.origin} → ${plan.destination} · ` : ""}
             {plan.month} · Budget {formatINR(plan.budget)} · {plan.itinerary.length}-day
             itinerary
           </p>
