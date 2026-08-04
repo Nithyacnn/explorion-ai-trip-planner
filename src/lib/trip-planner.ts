@@ -1,8 +1,24 @@
 export type Slot = { label: string; tag: string; activity: string };
 export type DayPlan = { day: number; title: string; slots: Slot[] };
 
+export type Stay = {
+  name: string;
+  type: string;
+  pricePerNight: number;
+  why: string;
+};
+
+export type AgentLabels = {
+  transport: string;
+  stay: string;
+  itinerary: string;
+  budget: string;
+};
+
 export type TripPlan = {
   destination: string;
+  origin: string | null;
+  needsOrigin: boolean;
   days: number;
   budget: number;
   month: string;
@@ -12,6 +28,8 @@ export type TripPlan = {
   };
   itinerary: DayPlan[];
   budgetBreakdown: { label: string; amount: number; pct: number }[];
+  stay?: Stay;
+  agentLabels?: AgentLabels;
   style?: string;
   vibe?: string;
 };
