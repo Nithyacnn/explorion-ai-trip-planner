@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { Compass, ArrowRight, Sparkles, Loader2 } from "lucide-react";
+import { Compass, ArrowRight, Sparkles, Loader2, MapPin, RotateCcw } from "lucide-react";
 import { generateTripPlan } from "@/lib/trip-ai.functions";
-import { planTrip, destinationVibe, type TripPlan } from "@/lib/trip-planner";
+import { destinationVibe, type TripPlan } from "@/lib/trip-planner";
 import { TripDashboard } from "@/components/TripDashboard";
 
 export const Route = createFileRoute("/")({
@@ -35,30 +35,49 @@ const CHIPS = [
   "4 days in Manali under ₹30,000 in December",
 ];
 
+const ORIGIN_CHIPS = ["Bengaluru", "Delhi", "Mumbai", "Chennai"];
+
 function Home() {
   const [prompt, setPrompt] = useState("");
   const [plan, setPlan] = useState<TripPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [origin, setOrigin] = useState<string | null>(null);
+  const [originInput, setOriginInput] = useState("");
   const askAi = useServerFn(generateTripPlan);
 
-  const handlePlan = async () => {
-    const text = prompt.trim();
+  const run = async (text: string, from: string | null) => {
     if (!text || loading) return;
     setLoading(true);
     setError(null);
+    setPlan(null);
     try {
-      const aiPlan = await askAi({ data: { prompt: text } });
+      const aiPlan = await askAi({ data: { prompt: text, origin: from } });
       setPlan(aiPlan);
+      if (aiPlan.origin && !from) setOrigin(aiPlan.origin);
     } catch (err) {
+      setPlan(null);
       setError(
-        err instanceof Error ? err.message : "Could not reach the AI — showing an estimate.",
+        err instanceof Error
+          ? err.message
+          : "We couldn't plan that trip just now. Please try again.",
       );
-      setPlan(planTrip(text));
     } finally {
       setLoading(false);
     }
   };
+
+  const handlePlan = () => void run(prompt.trim(), origin);
+
+  const chooseOrigin = (city: string) => {
+    const clean = city.trim();
+    if (!clean) return;
+    setOrigin(clean);
+    setOriginInput("");
+    void run(prompt.trim(), clean);
+  };
+
+  const needsOrigin = !!plan?.needsOrigin;
 
   return (
     <div className="min-h-screen">
@@ -105,7 +124,9 @@ function Home() {
               className="w-full resize-none bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground"
             />
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-xs text-muted-foreground">Tip: press ⌘/Ctrl + Enter</p>
+              <p className="text-xs text-muted-foreground">
+                {origin ? `Departing from ${origin}` : "Tip: press ⌘/Ctrl + Enter"}
+              </p>
               <button
                 onClick={handlePlan}
                 disabled={loading || !prompt.trim()}
@@ -137,16 +158,57 @@ function Home() {
           </div>
         </section>
 
-        {error ? (
-          <p className="mb-4 rounded-xl border border-border px-4 py-3 text-xs text-muted-foreground">
-            {error}
-          </p>
-        ) : null}
-
-        {loading && !plan ? (
+        {loading ? (
           <section className="panel-navy mt-6 flex items-center gap-3 p-8 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin text-primary" /> Explorion AI is designing
-            your trip…
+            <Loader2 className="size-4 animate-spin text-primary" /> Planning your trip…
+          </section>
+        ) : error ? (
+          <section className="panel-navy mt-6 space-y-4 p-8">
+            <p className="text-sm text-foreground">
+              {error} Nothing was lost — give it another go.
+            </p>
+            <button
+              onClick={handlePlan}
+              className="inline-flex items-center gap-2 rounded-xl border border-primary px-4 py-2.5 text-sm font-semibold text-primary transition hover:bg-primary hover:text-primary-foreground"
+            >
+              <RotateCcw className="size-4" /> Retry
+            </button>
+          </section>
+        ) : needsOrigin ? (
+          <section className="panel-navy mt-6 space-y-4 p-8">
+            <p className="flex items-center gap-2 text-sm text-foreground">
+              <MapPin className="size-4 text-primary" /> Where are you travelling from? We
+              need your starting city for accurate train and flight fares.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {ORIGIN_CHIPS.map((city) => (
+                <button
+                  key={city}
+                  onClick={() => chooseOrigin(city)}
+                  className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground transition hover:border-primary hover:text-primary"
+                >
+                  {city}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={originInput}
+                onChange={(e) => setOriginInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") chooseOrigin(originInput);
+                }}
+                placeholder="Or type your city"
+                className="rounded-xl border border-border bg-transparent px-4 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary"
+              />
+              <button
+                onClick={() => chooseOrigin(originInput)}
+                disabled={!originInput.trim()}
+                className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition hover:brightness-110 disabled:opacity-50"
+              >
+                Use this city <ArrowRight className="size-4" />
+              </button>
+            </div>
           </section>
         ) : plan ? (
           <section className="border-t border-border pt-12">

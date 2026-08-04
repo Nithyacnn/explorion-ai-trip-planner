@@ -8,12 +8,26 @@ import {
   Wallet,
   Bookmark,
   Check,
+  BedDouble,
+  Sparkles,
 } from "lucide-react";
 import { formatINR, type TripPlan } from "@/lib/trip-planner";
 
 const slotIcons = [Sun, Sunset, Moon];
 
 const STORAGE_KEY = "explorion.saved-trips";
+
+const AI_CAPTION = "AI-estimated ranges, not live pricing.";
+
+function AgentTag({ label }: { label: string | undefined }) {
+  if (!label) return null;
+  return (
+    <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary">
+      <Sparkles className="size-3" /> Curated by {label}
+    </span>
+  );
+}
+
 
 export function TripDashboard({ plan }: { plan: TripPlan }) {
   const [saved, setSaved] = useState(false);
@@ -45,6 +59,7 @@ export function TripDashboard({ plan }: { plan: TripPlan }) {
             {plan.days} days in {plan.destination}
           </h2>
           <p className="text-sm text-muted-foreground">
+            {plan.origin ? `${plan.origin} → ${plan.destination} · ` : ""}
             {plan.month} · Budget {formatINR(plan.budget)} · {plan.itinerary.length}-day
             itinerary
           </p>
@@ -63,7 +78,10 @@ export function TripDashboard({ plan }: { plan: TripPlan }) {
         {/* Transport */}
         <section className="card-ivory p-6 lg:col-span-1">
           <h3 className="font-display text-xl">Transport estimates</h3>
-          <p className="mt-1 text-xs opacity-70">Round-trip, per person</p>
+          <p className="mt-1 text-xs opacity-70">
+            Round-trip, per person{plan.origin ? ` · from ${plan.origin}` : ""}
+          </p>
+          <AgentTag label={plan.agentLabels?.transport} />
 
           <div className="mt-5 space-y-4">
             {[
@@ -97,13 +115,34 @@ export function TripDashboard({ plan }: { plan: TripPlan }) {
               </div>
             ))}
           </div>
+          <p className="mt-4 text-[11px] opacity-60">{AI_CAPTION}</p>
 
+          {plan.stay ? (
+            <div className="mt-6 border-t border-current/10 pt-5">
+              <h3 className="font-display flex items-center gap-2 text-xl">
+                <BedDouble className="size-5" /> Where to stay
+              </h3>
+              <AgentTag label={plan.agentLabels?.stay} />
+              <div className="mt-3 rounded-xl border border-current/10 bg-black/[0.03] p-4">
+                <p className="text-sm font-semibold">{plan.stay.name}</p>
+                <p className="mt-0.5 text-xs uppercase tracking-wider opacity-70">
+                  {plan.stay.type}
+                </p>
+                <p className="mt-2 inline-flex rounded-lg bg-primary/15 px-2.5 py-1 text-base font-semibold tabular-nums">
+                  {formatINR(plan.stay.pricePerNight)} / night
+                </p>
+                <p className="mt-2 text-xs leading-snug opacity-75">{plan.stay.why}</p>
+              </div>
+            </div>
+          ) : null}
         </section>
 
         {/* Itinerary */}
         <section className="panel-navy p-6 lg:col-span-2">
           <h3 className="font-display text-xl text-foreground">Day-by-day itinerary</h3>
+          <AgentTag label={plan.agentLabels?.itinerary} />
           <ol className="mt-5 space-y-5 border-l border-border pl-6">
+
             {plan.itinerary.map((day) => (
               <li key={day.day} className="relative">
                 <span className="absolute -left-[31px] top-1 flex size-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
@@ -146,6 +185,9 @@ export function TripDashboard({ plan }: { plan: TripPlan }) {
           </h3>
           <p className="text-sm opacity-70">Total {formatINR(plan.budget)}</p>
         </div>
+        <AgentTag label={plan.agentLabels?.budget} />
+
+
 
         <div className="mt-6 grid gap-5 sm:grid-cols-2">
           {plan.budgetBreakdown.map((b) => (
@@ -165,7 +207,9 @@ export function TripDashboard({ plan }: { plan: TripPlan }) {
             </div>
           ))}
         </div>
+        <p className="mt-5 text-[11px] opacity-60">{AI_CAPTION}</p>
       </section>
+
     </div>
   );
 }
