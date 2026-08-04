@@ -78,7 +78,10 @@ export function TripDashboard({ plan }: { plan: TripPlan }) {
         {/* Transport */}
         <section className="card-ivory p-6 lg:col-span-1">
           <h3 className="font-display text-xl">Transport estimates</h3>
-          <p className="mt-1 text-xs opacity-70">Round-trip, per person</p>
+          <p className="mt-1 text-xs opacity-70">
+            Round-trip, per person{plan.origin ? ` · from ${plan.origin}` : ""}
+          </p>
+          <AgentTag label={plan.agentLabels?.transport} />
 
           <div className="mt-5 space-y-4">
             {[
