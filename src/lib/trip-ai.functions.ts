@@ -102,24 +102,31 @@ export const generateTripPlan = createServerFn({ method: "POST" })
       ? `\nTrip preference (free text from the traveller, shape the whole plan around it): ${preference}`
       : `\nThe traveller skipped the preference question — use a balanced default plan and return "trip_preference": "".`;
 
-    let raw: z.infer<typeof planSchema>;
+    let text = "";
     try {
-      const { output } = await generateText({
+      const result = streamText({
         model: gateway("google/gemini-3.6-flash"),
         system: SYSTEM,
-        prompt: `${data.prompt}${originLine}${preferenceLine}`,
-        output: Output.object({ schema: planSchema }),
+        prompt: `${data.prompt}${originLine}${preferenceLine}\n\nReturn ONLY the raw JSON object described in the system message.`,
       });
-      raw = output;
+      text = await result.text;
     } catch (error) {
-      if (NoObjectGeneratedError.isInstance(error)) {
-        throw new Error("The AI returned an unreadable plan. Please try again.");
-      }
       const message = error instanceof Error ? error.message : "AI request failed";
+      console.error("[Explorion] AI request failed:", message);
       if (message.includes("429")) throw new Error("Too many requests — try again shortly.");
       if (message.includes("402")) throw new Error("AI credits exhausted for this workspace.");
-      throw new Error(message);
+      throw new Error("Something went wrong generating your trip — try again.");
     }
+
+    console.log("[Explorion] raw AI response:", text);
+
+    const parsed = planSchema.safeParse(extractJson(text));
+    if (!parsed.success) {
+      console.error("[Explorion] could not parse AI plan:", parsed.error.message, text);
+      throw new Error("Something went wrong generating your trip — try again.");
+    }
+    const raw = parsed.data;
+
 
     const origin = data.origin?.trim() || raw.origin?.trim() || null;
     const days = Math.max(1, Math.round(raw.duration_days || raw.itinerary.length || 3));
