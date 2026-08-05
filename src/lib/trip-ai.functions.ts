@@ -89,12 +89,17 @@ export const generateTripPlan = createServerFn({ method: "POST" })
       ? `\nThe traveller is departing from: ${data.origin}. Use it as the origin and set needs_origin to false.`
       : "";
 
+    const preference = data.preference?.trim() ?? "";
+    const preferenceLine = preference
+      ? `\nTrip preference (free text from the traveller, shape the whole plan around it): ${preference}`
+      : `\nThe traveller skipped the preference question — use a balanced default plan and return "trip_preference": "".`;
+
     let raw: z.infer<typeof planSchema>;
     try {
       const { output } = await generateText({
         model: gateway("google/gemini-3.6-flash"),
         system: SYSTEM,
-        prompt: `${data.prompt}${originLine}`,
+        prompt: `${data.prompt}${originLine}${preferenceLine}`,
         output: Output.object({ schema: planSchema }),
       });
       raw = output;
