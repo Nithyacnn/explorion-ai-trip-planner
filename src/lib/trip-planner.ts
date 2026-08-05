@@ -32,6 +32,7 @@ export type TripPlan = {
   agentLabels?: AgentLabels;
   style?: string;
   vibe?: string;
+  tripPreference?: string;
 };
 
 type Dest = {

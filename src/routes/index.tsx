@@ -37,6 +37,13 @@ const CHIPS = [
 
 const ORIGIN_CHIPS = ["Bengaluru", "Delhi", "Mumbai", "Chennai"];
 
+const PREFERENCE_CHIPS = [
+  "Take me somewhere unexplored",
+  "Keep it calm, minimal travel between stops",
+  "Make it adventurous",
+  "I have food or stay preferences",
+];
+
 function Home() {
   const [prompt, setPrompt] = useState("");
   const [plan, setPlan] = useState<TripPlan | null>(null);
@@ -44,15 +51,18 @@ function Home() {
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState<string | null>(null);
   const [originInput, setOriginInput] = useState("");
+  const [askingPreference, setAskingPreference] = useState(false);
+  const [preference, setPreference] = useState("");
+  const [preferenceInput, setPreferenceInput] = useState("");
   const askAi = useServerFn(generateTripPlan);
 
-  const run = async (text: string, from: string | null) => {
+  const run = async (text: string, from: string | null, pref: string) => {
     if (!text || loading) return;
     setLoading(true);
     setError(null);
     setPlan(null);
     try {
-      const aiPlan = await askAi({ data: { prompt: text, origin: from } });
+      const aiPlan = await askAi({ data: { prompt: text, origin: from, preference: pref } });
       setPlan(aiPlan);
       if (aiPlan.origin && !from) setOrigin(aiPlan.origin);
     } catch (err) {
@@ -67,17 +77,38 @@ function Home() {
     }
   };
 
-  const handlePlan = () => void run(prompt.trim(), origin);
+  const openPreference = () => {
+    if (!prompt.trim()) return;
+    setPreferenceInput(preference);
+    setError(null);
+    setPlan(null);
+    setAskingPreference(true);
+  };
+
+  const submitPreference = (pref: string) => {
+    const clean = pref.trim();
+    setPreference(clean);
+    setAskingPreference(false);
+    void run(prompt.trim(), origin, clean);
+  };
+
+  const handlePlan = () => (preference ? void run(prompt.trim(), origin, preference) : openPreference());
 
   const chooseOrigin = (city: string) => {
     const clean = city.trim();
     if (!clean) return;
     setOrigin(clean);
     setOriginInput("");
-    void run(prompt.trim(), clean);
+    void run(prompt.trim(), clean, preference);
+  };
+
+  const editPreference = () => {
+    setPreferenceInput(preference);
+    setAskingPreference(true);
   };
 
   const needsOrigin = !!plan?.needsOrigin;
+
 
   return (
     <div className="min-h-screen">
@@ -158,7 +189,58 @@ function Home() {
           </div>
         </section>
 
-        {loading ? (
+        {askingPreference ? (
+          <section className="panel-navy mt-6 space-y-4 p-8">
+            <div>
+              <h2 className="font-display text-2xl text-foreground">
+                How do you want this trip to feel?
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Tell us in your own words — we'll shape the itinerary, meals and stay
+                around it.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {PREFERENCE_CHIPS.map((chip) => (
+                <button
+                  key={chip}
+                  onClick={() => setPreferenceInput(chip)}
+                  className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground transition hover:border-primary hover:text-primary"
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+            <textarea
+              rows={2}
+              value={preferenceInput}
+              onChange={(e) => setPreferenceInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  submitPreference(preferenceInput);
+                }
+              }}
+              placeholder="e.g. calm trip, vegetarian food, avoiding crowds"
+              className="w-full resize-none rounded-xl border border-border bg-transparent px-4 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary"
+            />
+            <div className="flex flex-wrap items-center gap-4">
+              <button
+                onClick={() => submitPreference(preferenceInput)}
+                disabled={!preferenceInput.trim()}
+                className="brass-glow inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition hover:brightness-110 disabled:opacity-50"
+              >
+                Build my itinerary <ArrowRight className="size-4" />
+              </button>
+              <button
+                onClick={() => submitPreference("")}
+                className="text-sm text-muted-foreground underline underline-offset-4 transition hover:text-primary"
+              >
+                Skip, surprise me
+              </button>
+            </div>
+          </section>
+        ) : loading ? (
           <section className="panel-navy mt-6 flex items-center gap-3 p-8 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin text-primary" /> Planning your trip…
           </section>
@@ -216,7 +298,7 @@ function Home() {
               {plan.vibe ?? destinationVibe(plan.destination)}
               {plan.style ? ` · ${plan.style} style` : ""}
             </p>
-            <TripDashboard plan={plan} />
+            <TripDashboard plan={plan} onEditPreference={editPreference} />
           </section>
         ) : (
           <section className="panel-navy mt-6 p-8 text-sm text-muted-foreground">
