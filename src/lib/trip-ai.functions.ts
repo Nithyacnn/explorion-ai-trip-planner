@@ -6,6 +6,7 @@ import type { TripPlan } from "@/lib/trip-planner";
 const Input = z.object({
   prompt: z.string(),
   origin: z.string().nullable().optional(),
+  preference: z.string().nullable().optional(),
 });
 
 const planSchema = z.object({
