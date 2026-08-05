@@ -1,7 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
-import { generateText, Output, NoObjectGeneratedError } from "ai";
+import { streamText } from "ai";
 import { z } from "zod";
+import { extractJson } from "@/lib/json-extract";
 import type { TripPlan } from "@/lib/trip-planner";
+
 
 const Input = z.object({
   prompt: z.string(),
