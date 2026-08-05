@@ -176,6 +176,7 @@ export const generateTripPlan = createServerFn({ method: "POST" })
         itinerary: raw.agent_labels.itinerary,
         budget: raw.agent_labels.budget_breakdown,
       },
+      tripPreference: preference || raw.trip_preference?.trim() || "",
       style: raw.style,
       vibe: raw.vibe,
     };
