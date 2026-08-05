@@ -10,6 +10,7 @@ import {
   Check,
   BedDouble,
   Sparkles,
+  Pencil,
 } from "lucide-react";
 import { formatINR, type TripPlan } from "@/lib/trip-planner";
 

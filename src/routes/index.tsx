@@ -37,6 +37,13 @@ const CHIPS = [
 
 const ORIGIN_CHIPS = ["Bengaluru", "Delhi", "Mumbai", "Chennai"];
 
+const PREFERENCE_CHIPS = [
+  "Take me somewhere unexplored",
+  "Keep it calm, minimal travel between stops",
+  "Make it adventurous",
+  "I have food or stay preferences",
+];
+
 function Home() {
   const [prompt, setPrompt] = useState("");
   const [plan, setPlan] = useState<TripPlan | null>(null);
@@ -44,15 +51,18 @@ function Home() {
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState<string | null>(null);
   const [originInput, setOriginInput] = useState("");
+  const [askingPreference, setAskingPreference] = useState(false);
+  const [preference, setPreference] = useState("");
+  const [preferenceInput, setPreferenceInput] = useState("");
   const askAi = useServerFn(generateTripPlan);
 
-  const run = async (text: string, from: string | null) => {
+  const run = async (text: string, from: string | null, pref: string) => {
     if (!text || loading) return;
     setLoading(true);
     setError(null);
     setPlan(null);
     try {
-      const aiPlan = await askAi({ data: { prompt: text, origin: from } });
+      const aiPlan = await askAi({ data: { prompt: text, origin: from, preference: pref } });
       setPlan(aiPlan);
       if (aiPlan.origin && !from) setOrigin(aiPlan.origin);
     } catch (err) {
@@ -67,17 +77,38 @@ function Home() {
     }
   };
 
-  const handlePlan = () => void run(prompt.trim(), origin);
+  const openPreference = () => {
+    if (!prompt.trim()) return;
+    setPreferenceInput(preference);
+    setError(null);
+    setPlan(null);
+    setAskingPreference(true);
+  };
+
+  const submitPreference = (pref: string) => {
+    const clean = pref.trim();
+    setPreference(clean);
+    setAskingPreference(false);
+    void run(prompt.trim(), origin, clean);
+  };
+
+  const handlePlan = () => (preference ? void run(prompt.trim(), origin, preference) : openPreference());
 
   const chooseOrigin = (city: string) => {
     const clean = city.trim();
     if (!clean) return;
     setOrigin(clean);
     setOriginInput("");
-    void run(prompt.trim(), clean);
+    void run(prompt.trim(), clean, preference);
+  };
+
+  const editPreference = () => {
+    setPreferenceInput(preference);
+    setAskingPreference(true);
   };
 
   const needsOrigin = !!plan?.needsOrigin;
+
 
   return (
     <div className="min-h-screen">
