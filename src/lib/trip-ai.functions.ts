@@ -196,5 +196,7 @@ export const generateTripPlan = createServerFn({ method: "POST" })
       tripPreference: preference || raw.trip_preference?.trim() || "",
       style: raw.style,
       vibe: raw.vibe,
+      debugRaw: text,
+
     };
   });
