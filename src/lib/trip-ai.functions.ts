@@ -64,7 +64,15 @@ Rules:
 - budget_breakdown: stay + transit + meals + activities must sum to approximately budget_total, and stay.price_per_night × duration_days must roughly match budget_breakdown.stay.
 - agent_labels must be exactly: transport "Research Agent", stay "Property Verification Agent", itinerary "Itinerary Builder Agent", budget_breakdown "Budget Optimisation Agent".
 - month: the travel month mentioned, else "Anytime".
-- style: romantic, solo, luxury, budget, family, adventure or balanced. vibe: a short 3-6 word description of the destination.`;
+- style: romantic, solo, luxury, budget, family, adventure or balanced. vibe: a short 3-6 word description of the destination.
+- trip_preference: echo back the traveller's free-text preference exactly as supplied (empty string if none was given).
+
+Trip preference shaping (apply ALL signals present, combined):
+- Unexplored / hidden / "not touristy": bias activities toward lesser-known spots instead of headline attractions, and in at least one activity string append a short " — why: ..." clause explaining why it fits that preference.
+- Calm / relaxed / slow / less travel: fewer, lighter activities per day (repeat "Free time / rest" for a slot when appropriate), no multi-location day trips, and keep the stay and activities clustered in one area.
+- Adventurous / adrenaline / active: prioritise outdoor and activity-based items over sightseeing-only ones.
+- Food or stay preferences (vegetarian, gluten-free, boutique, beachfront, etc.): meal suggestions and the stay recommendation MUST match; never suggest anything conflicting with a stated preference.
+- If trip_preference is empty, produce a balanced default plan.`;
 
 const SLOT_TAGS = ["08:00 – 12:00", "12:00 – 17:00", "17:00 – late"];
 
