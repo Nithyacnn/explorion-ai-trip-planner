@@ -298,7 +298,7 @@ function Home() {
               {plan.vibe ?? destinationVibe(plan.destination)}
               {plan.style ? ` · ${plan.style} style` : ""}
             </p>
-            <TripDashboard plan={plan} />
+            <TripDashboard plan={plan} onEditPreference={editPreference} />
           </section>
         ) : (
           <section className="panel-navy mt-6 p-8 text-sm text-muted-foreground">
