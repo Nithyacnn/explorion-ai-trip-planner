@@ -29,7 +29,13 @@ function AgentTag({ label }: { label: string | undefined }) {
 }
 
 
-export function TripDashboard({ plan }: { plan: TripPlan }) {
+export function TripDashboard({
+  plan,
+  onEditPreference,
+}: {
+  plan: TripPlan;
+  onEditPreference?: () => void;
+}) {
   const [saved, setSaved] = useState(false);
 
   const maxPct = useMemo(
@@ -51,7 +57,25 @@ export function TripDashboard({ plan }: { plan: TripPlan }) {
   };
 
   return (
-    <div key={`${plan.destination}-${plan.days}-${plan.budget}-${plan.month}`} className="fade-rise space-y-8">
+    <div
+      key={`${plan.destination}-${plan.days}-${plan.budget}-${plan.month}-${plan.tripPreference ?? ""}`}
+      className="fade-rise space-y-8"
+    >
+      {onEditPreference ? (
+        <button
+          onClick={onEditPreference}
+          className="inline-flex max-w-full items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-3.5 py-1.5 text-xs text-primary transition hover:bg-primary hover:text-primary-foreground"
+        >
+          <Sparkles className="size-3 shrink-0" />
+          <span className="truncate">
+            {plan.tripPreference
+              ? `Planned for: ${plan.tripPreference}`
+              : "No preference set — tap to add one"}
+          </span>
+          <Pencil className="size-3 shrink-0 opacity-70" />
+        </button>
+      ) : null}
+
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="space-y-2">
           <p className="text-xs uppercase tracking-[0.35em] text-primary">Your plan</p>
