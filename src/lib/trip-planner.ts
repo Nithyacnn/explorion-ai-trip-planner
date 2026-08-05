@@ -33,6 +33,8 @@ export type TripPlan = {
   style?: string;
   vibe?: string;
   tripPreference?: string;
+  debugRaw?: string;
+
 };
 
 type Dest = {

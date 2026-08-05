@@ -1,7 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
-import { generateText, Output, NoObjectGeneratedError } from "ai";
+import { streamText } from "ai";
 import { z } from "zod";
+import { extractJson } from "@/lib/json-extract";
 import type { TripPlan } from "@/lib/trip-planner";
+
 
 const Input = z.object({
   prompt: z.string(),
@@ -52,7 +54,15 @@ const planSchema = z.object({
 });
 
 const SYSTEM = `You are Explorion, an Indian travel planning and budgeting expert.
-Return ONLY valid JSON matching the given schema. Numbers are plain integers in INR.
+
+OUTPUT FORMAT (critical): respond with ONE raw JSON object and nothing else.
+No markdown, no \`\`\`json code fences, no commentary, no explanation before or after.
+The very first character of your reply must be "{" and the very last must be "}".
+Numbers are plain integers in INR (no commas, no currency symbols, not strings).
+
+JSON shape:
+{"destination":string,"origin":string|null,"needs_origin":boolean,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"train":{"low":number,"high":number},"flight":{"low":number,"high":number}},"stay":{"name":string,"type":string,"price_per_night":number,"why":string},"itinerary":[{"day":number,"morning":string,"afternoon":string,"evening":string}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}
+
 
 Rules:
 - Parse destination, duration_days (default 3) and budget_total from the free-text prompt. If no budget is stated, estimate a realistic one.
@@ -94,24 +104,31 @@ export const generateTripPlan = createServerFn({ method: "POST" })
       ? `\nTrip preference (free text from the traveller, shape the whole plan around it): ${preference}`
       : `\nThe traveller skipped the preference question — use a balanced default plan and return "trip_preference": "".`;
 
-    let raw: z.infer<typeof planSchema>;
+    let text = "";
     try {
-      const { output } = await generateText({
+      const result = streamText({
         model: gateway("google/gemini-3.6-flash"),
         system: SYSTEM,
-        prompt: `${data.prompt}${originLine}${preferenceLine}`,
-        output: Output.object({ schema: planSchema }),
+        prompt: `${data.prompt}${originLine}${preferenceLine}\n\nReturn ONLY the raw JSON object described in the system message.`,
       });
-      raw = output;
+      text = await result.text;
     } catch (error) {
-      if (NoObjectGeneratedError.isInstance(error)) {
-        throw new Error("The AI returned an unreadable plan. Please try again.");
-      }
       const message = error instanceof Error ? error.message : "AI request failed";
+      console.error("[Explorion] AI request failed:", message);
       if (message.includes("429")) throw new Error("Too many requests — try again shortly.");
       if (message.includes("402")) throw new Error("AI credits exhausted for this workspace.");
-      throw new Error(message);
+      throw new Error("Something went wrong generating your trip — try again.");
     }
+
+    console.log("[Explorion] raw AI response:", text);
+
+    const parsed = planSchema.safeParse(extractJson(text));
+    if (!parsed.success) {
+      console.error("[Explorion] could not parse AI plan:", parsed.error.message, text);
+      throw new Error("Something went wrong generating your trip — try again.");
+    }
+    const raw = parsed.data;
+
 
     const origin = data.origin?.trim() || raw.origin?.trim() || null;
     const days = Math.max(1, Math.round(raw.duration_days || raw.itinerary.length || 3));
@@ -179,5 +196,7 @@ export const generateTripPlan = createServerFn({ method: "POST" })
       tripPreference: preference || raw.trip_preference?.trim() || "",
       style: raw.style,
       vibe: raw.vibe,
+      debugRaw: text,
+
     };
   });
