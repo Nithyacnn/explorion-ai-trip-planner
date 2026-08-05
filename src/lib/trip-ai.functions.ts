@@ -13,6 +13,7 @@ const planSchema = z.object({
   destination: z.string(),
   origin: z.string().nullable(),
   needs_origin: z.boolean(),
+  trip_preference: z.string(),
   duration_days: z.number(),
   budget_total: z.number(),
   month: z.string(),
