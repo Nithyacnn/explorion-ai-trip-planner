@@ -63,18 +63,24 @@ function Home() {
     setPlan(null);
     try {
       const aiPlan = await askAi({ data: { prompt: text, origin: from, preference: pref } });
+      if (import.meta.env.DEV) {
+        console.log("[Explorion] raw AI response:", aiPlan.debugRaw);
+        console.log("[Explorion] parsed trip plan:", aiPlan);
+      }
       setPlan(aiPlan);
       if (aiPlan.origin && !from) setOrigin(aiPlan.origin);
     } catch (err) {
+      if (import.meta.env.DEV) console.error("[Explorion] trip generation failed:", err);
       setPlan(null);
       setError(
-        err instanceof Error
+        err instanceof Error && err.message
           ? err.message
-          : "We couldn't plan that trip just now. Please try again.",
+          : "Something went wrong generating your trip — try again.",
       );
     } finally {
       setLoading(false);
     }
+
   };
 
   const openPreference = () => {
