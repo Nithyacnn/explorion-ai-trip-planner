@@ -1,10 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { Compass, ArrowRight, Sparkles, Loader2, MapPin, RotateCcw } from "lucide-react";
-import { generateTripPlan } from "@/lib/trip-ai.functions";
-import { destinationVibe, type TripPlan } from "@/lib/trip-planner";
+import {
+  Compass,
+  ArrowRight,
+  Sparkles,
+  Loader2,
+  MapPin,
+  RotateCcw,
+  Briefcase,
+  ChevronDown,
+  Trash2,
+  AlertTriangle,
+} from "lucide-react";
+import { generateTripPlan, refineTripPlan } from "@/lib/trip-ai.functions";
+import { destinationVibe, formatINR, type TripPlan } from "@/lib/trip-planner";
 import { TripDashboard } from "@/components/TripDashboard";
+import { loadSavedTrips, removeSavedTrip, saveTrip, type SavedTrip } from "@/lib/saved-trips";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -13,13 +25,13 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Describe your trip in plain words and Explorion builds a day-by-day itinerary, train vs flight estimates and a full budget breakdown.",
+          "Describe your trip in plain words and Explorion builds a day-by-day itinerary, transport options and a full budget breakdown you can refine.",
       },
       { property: "og:title", content: "Explorion — AI Travel Planner" },
       {
         property: "og:description",
         content:
-          "Type '3 days in Goa under ₹20,000' and get an instant itinerary, transport costs and budget split.",
+          "Type '3 days in Goa under ₹20,000' and get an instant itinerary, transport comparison and budget split.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -54,13 +66,45 @@ function Home() {
   const [askingPreference, setAskingPreference] = useState(false);
   const [preference, setPreference] = useState("");
   const [preferenceInput, setPreferenceInput] = useState("");
+
+  const [marks, setMarks] = useState<Record<string, boolean>>({});
+  const [selectedStay, setSelectedStay] = useState(0);
+  const [refineText, setRefineText] = useState("");
+  const [refining, setRefining] = useState(false);
+  const [refineError, setRefineError] = useState<string | null>(null);
+  const [changeSummary, setChangeSummary] = useState<string | null>(null);
+
+  const [trips, setTrips] = useState<SavedTrip[]>([]);
+  const [tripsOpen, setTripsOpen] = useState(false);
+  const currentId = useRef<string | undefined>(undefined);
+
   const askAi = useServerFn(generateTripPlan);
+  const askRefine = useServerFn(refineTripPlan);
+
+  useEffect(() => {
+    setTrips(loadSavedTrips());
+  }, []);
+
+  const persist = (next: TripPlan) => {
+    try {
+      const list = saveTrip(next, currentId.current);
+      currentId.current = list[0]?.id;
+      setTrips(list);
+    } catch (err) {
+      console.error("[Explorion] could not persist trip:", err);
+    }
+  };
 
   const run = async (text: string, from: string | null, pref: string) => {
     if (!text || loading) return;
     setLoading(true);
     setError(null);
     setPlan(null);
+    setMarks({});
+    setChangeSummary(null);
+    setRefineError(null);
+    setSelectedStay(0);
+    currentId.current = undefined;
     try {
       const aiPlan = await askAi({ data: { prompt: text, origin: from, preference: pref } });
       if (import.meta.env.DEV) {
@@ -69,8 +113,9 @@ function Home() {
       }
       setPlan(aiPlan);
       if (aiPlan.origin && !from) setOrigin(aiPlan.origin);
+      if (!aiPlan.needsOrigin) persist(aiPlan);
     } catch (err) {
-      if (import.meta.env.DEV) console.error("[Explorion] trip generation failed:", err);
+      console.error("[Explorion] trip generation failed for prompt:", text, err);
       setPlan(null);
       setError(
         err instanceof Error && err.message
@@ -80,7 +125,6 @@ function Home() {
     } finally {
       setLoading(false);
     }
-
   };
 
   const openPreference = () => {
@@ -98,7 +142,8 @@ function Home() {
     void run(prompt.trim(), origin, clean);
   };
 
-  const handlePlan = () => (preference ? void run(prompt.trim(), origin, preference) : openPreference());
+  const handlePlan = () =>
+    preference ? void run(prompt.trim(), origin, preference) : openPreference();
 
   const chooseOrigin = (city: string) => {
     const clean = city.trim();
@@ -113,8 +158,83 @@ function Home() {
     setAskingPreference(true);
   };
 
-  const needsOrigin = !!plan?.needsOrigin;
+  const toggleMark = (key: string) =>
+    setMarks((prev) => ({ ...prev, [key]: !prev[key] }));
 
+  const runRefine = async () => {
+    const request = refineText.trim();
+    if (!plan || refining) return;
+    const scope = Object.entries(marks)
+      .filter(([, v]) => v)
+      .map(([k]) => k);
+    if (!request && !scope.length) {
+      setRefineError("What would you like to change?");
+      return;
+    }
+    if (!request) {
+      setRefineError("Tell us what to change about the selected sections.");
+      return;
+    }
+    setRefining(true);
+    setRefineError(null);
+    try {
+      const patch = await askRefine({ data: { request, scope, plan } });
+      if (import.meta.env.DEV) console.log("[Explorion] refinement patch:", patch);
+      if (!patch.changed.length) {
+        setRefineError(patch.summary || "What would you like to change?");
+        return;
+      }
+      const next: TripPlan = { ...plan };
+      if (patch.transport) next.transport = patch.transport;
+      if (patch.stayOptions) {
+        next.stayOptions = patch.stayOptions;
+        setSelectedStay(0);
+      }
+      if (patch.budgetBreakdown) next.budgetBreakdown = patch.budgetBreakdown;
+      if (patch.itineraryDays?.length) {
+        next.itinerary = plan.itinerary.map((day) => {
+          const replacement = patch.itineraryDays?.find((d) => d.day === day.day);
+          return replacement ? { ...day, slots: replacement.slots } : day;
+        });
+      }
+      setPlan(next);
+      setChangeSummary(patch.summary);
+      setMarks({});
+      setRefineText("");
+      persist(next);
+    } catch (err) {
+      console.error("[Explorion] refinement failed for request:", request, err);
+      setRefineError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Couldn't apply that change — try again.",
+      );
+    } finally {
+      setRefining(false);
+    }
+  };
+
+  const openSavedTrip = (trip: SavedTrip) => {
+    setTripsOpen(false);
+    if (trip.broken) return;
+    try {
+      currentId.current = trip.id;
+      setPlan(trip.plan);
+      setOrigin(trip.plan.origin);
+      setPreference(trip.plan.tripPreference ?? "");
+      setMarks({});
+      setSelectedStay(0);
+      setChangeSummary(null);
+      setError(null);
+      setRefineError(null);
+      setAskingPreference(false);
+    } catch (err) {
+      console.error("[Explorion] saved trip failed to load:", trip.id, err);
+      setError("This trip couldn't be loaded.");
+    }
+  };
+
+  const needsOrigin = !!plan?.needsOrigin;
 
   return (
     <div className="min-h-screen">
@@ -130,9 +250,64 @@ function Home() {
             </p>
           </div>
         </div>
-        <span className="hidden items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground sm:flex">
-          <Sparkles className="size-3 text-primary" /> Plans in seconds
-        </span>
+
+        <div
+          className="relative"
+          onMouseEnter={() => setTripsOpen(true)}
+          onMouseLeave={() => setTripsOpen(false)}
+        >
+          <button
+            onClick={() => setTripsOpen((v) => !v)}
+            className="flex items-center gap-2 rounded-full border border-border px-3.5 py-2 text-xs text-muted-foreground transition hover:border-primary hover:text-primary"
+          >
+            <Briefcase className="size-3.5" /> My Trips ({trips.length})
+            <ChevronDown className="size-3" />
+          </button>
+          {tripsOpen ? (
+            <div className="panel-navy absolute right-0 z-40 mt-2 w-80 p-3">
+              {trips.length === 0 ? (
+                <p className="p-3 text-xs text-muted-foreground">
+                  No saved trips yet — plan one and it appears here automatically.
+                </p>
+              ) : (
+                <ul className="max-h-80 space-y-1 overflow-auto">
+                  {trips.map((trip) => (
+                    <li key={trip.id} className="flex items-center gap-2">
+                      <button
+                        onClick={() => openSavedTrip(trip)}
+                        className="flex-1 rounded-lg px-3 py-2 text-left transition hover:bg-primary/10"
+                      >
+                        {trip.broken ? (
+                          <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <AlertTriangle className="size-3" /> This trip couldn&apos;t be
+                            loaded
+                          </span>
+                        ) : (
+                          <>
+                            <p className="text-sm text-foreground">
+                              {trip.plan.days} days in {trip.plan.destination}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {trip.plan.month} · {formatINR(trip.plan.budget)}
+                              {trip.plan.origin ? ` · from ${trip.plan.origin}` : ""}
+                            </p>
+                          </>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => setTrips(removeSavedTrip(trip.id))}
+                        aria-label="Delete saved trip"
+                        className="rounded-lg p-2 text-muted-foreground transition hover:text-primary"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : null}
+        </div>
       </header>
 
       <main className="mx-auto max-w-6xl px-6 pb-24">
@@ -166,7 +341,7 @@ function Home() {
               </p>
               <button
                 onClick={handlePlan}
-                disabled={loading || !prompt.trim()}
+                disabled={loading || refining || !prompt.trim()}
                 className="brass-glow inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
               >
                 {loading ? (
@@ -202,7 +377,7 @@ function Home() {
                 How do you want this trip to feel?
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Tell us in your own words — we'll shape the itinerary, meals and stay
+                Tell us in your own words — we&apos;ll shape the itinerary, meals and stay
                 around it.
               </p>
             </div>
@@ -266,7 +441,7 @@ function Home() {
           <section className="panel-navy mt-6 space-y-4 p-8">
             <p className="flex items-center gap-2 text-sm text-foreground">
               <MapPin className="size-4 text-primary" /> Where are you travelling from? We
-              need your starting city for accurate train and flight fares.
+              need your starting city for accurate fares.
             </p>
             <div className="flex flex-wrap gap-2">
               {ORIGIN_CHIPS.map((city) => (
@@ -304,7 +479,58 @@ function Home() {
               {plan.vibe ?? destinationVibe(plan.destination)}
               {plan.style ? ` · ${plan.style} style` : ""}
             </p>
-            <TripDashboard plan={plan} onEditPreference={editPreference} />
+            <TripDashboard
+              plan={plan}
+              onEditPreference={editPreference}
+              marks={marks}
+              onToggleMark={toggleMark}
+              selectedStay={selectedStay}
+              onSelectStay={setSelectedStay}
+              changeSummary={changeSummary}
+            />
+
+            <section className="panel-navy mt-10 space-y-4 p-6">
+              <div>
+                <h3 className="font-display text-xl text-foreground">Refine your trip</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Mark sections as “Change” above, or just describe what to adjust — the
+                  rest stays exactly as it is.
+                </p>
+              </div>
+              <textarea
+                rows={2}
+                value={refineText}
+                onChange={(e) => setRefineText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void runRefine();
+                  }
+                }}
+                placeholder="e.g. make day 2 calmer, or find a cheaper stay"
+                className="w-full resize-none rounded-xl border border-border bg-transparent px-4 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary"
+              />
+              <div className="flex flex-wrap items-center gap-4">
+                <button
+                  onClick={() => void runRefine()}
+                  disabled={refining || loading}
+                  className="brass-glow inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition hover:brightness-110 disabled:opacity-50"
+                >
+                  {refining ? (
+                    <>
+                      Updating <Loader2 className="size-4 animate-spin" />
+                    </>
+                  ) : (
+                    <>
+                      Refine <ArrowRight className="size-4" />
+                    </>
+                  )}
+                </button>
+                {refineError ? (
+                  <p className="text-sm text-foreground">{refineError}</p>
+                ) : null}
+              </div>
+            </section>
           </section>
         ) : (
           <section className="panel-navy mt-6 p-8 text-sm text-muted-foreground">

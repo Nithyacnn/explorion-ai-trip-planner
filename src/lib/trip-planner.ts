@@ -1,10 +1,28 @@
 export type Slot = { label: string; tag: string; activity: string };
 export type DayPlan = { day: number; title: string; slots: Slot[] };
 
+export type TransportModeId = "flight" | "train" | "bus" | "own_vehicle";
+
+export type TransportMode = {
+  mode: TransportModeId;
+  label: string;
+  min: number;
+  max: number;
+  duration: string;
+  notes: string;
+};
+
+export type Transport = {
+  modes: TransportMode[];
+  recommendedMode: string;
+  recommendedReason: string;
+};
+
 export type Stay = {
   name: string;
   type: string;
   pricePerNight: number;
+  rating: number;
   why: string;
 };
 
@@ -22,20 +40,24 @@ export type TripPlan = {
   days: number;
   budget: number;
   month: string;
-  transport: {
-    train: { label: string; min: number; max: number };
-    flight: { label: string; min: number; max: number };
-  };
+  transport: Transport;
   itinerary: DayPlan[];
   budgetBreakdown: { label: string; amount: number; pct: number }[];
-  stay?: Stay;
+  stayOptions: Stay[];
   agentLabels?: AgentLabels;
   style?: string;
   vibe?: string;
   tripPreference?: string;
   debugRaw?: string;
-
 };
+
+export const MODE_LABELS: Record<TransportModeId, string> = {
+  flight: "Flight (economy)",
+  train: "Train (SL / 3A)",
+  bus: "Bus (AC sleeper)",
+  own_vehicle: "Own vehicle (fuel + tolls)",
+};
+
 
 type Dest = {
   name: string;
@@ -294,19 +316,30 @@ export function planTrip(prompt: string): TripPlan {
     budget,
     month,
     transport: {
-      train: {
-        label: "Train (SL / 3A)",
-        min: Math.round((dest.trainMin * seasonBump) / 50) * 50,
-        max: Math.round((dest.trainMax * seasonBump) / 50) * 50,
-      },
-      flight: {
-        label: "Flight (economy)",
-        min: Math.round((dest.flightMin * seasonBump) / 50) * 50,
-        max: Math.round((dest.flightMax * seasonBump) / 50) * 50,
-      },
+      modes: [
+        {
+          mode: "train" as const,
+          label: MODE_LABELS.train,
+          min: Math.round((dest.trainMin * seasonBump) / 50) * 50,
+          max: Math.round((dest.trainMax * seasonBump) / 50) * 50,
+          duration: "Overnight",
+          notes: "Slower, easiest on budget",
+        },
+        {
+          mode: "flight" as const,
+          label: MODE_LABELS.flight,
+          min: Math.round((dest.flightMin * seasonBump) / 50) * 50,
+          max: Math.round((dest.flightMax * seasonBump) / 50) * 50,
+          duration: "1–3 hrs",
+          notes: "Fastest, book 3+ weeks ahead",
+        },
+      ],
+      recommendedMode: "train",
+      recommendedReason: "Cheapest option for this route on an offline estimate.",
     },
     itinerary,
     budgetBreakdown,
+    stayOptions: [],
   };
 }
 
