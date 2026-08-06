@@ -10,6 +10,7 @@ import {
   RotateCcw,
   Briefcase,
   ChevronDown,
+  Users,
   Trash2,
   AlertTriangle,
 } from "lucide-react";
@@ -49,6 +50,13 @@ const CHIPS = [
 
 const ORIGIN_CHIPS = ["Bengaluru", "Delhi", "Mumbai", "Chennai"];
 
+const TRAVELER_CHIPS: { label: string; count: number }[] = [
+  { label: "Solo", count: 1 },
+  { label: "Couple", count: 2 },
+  { label: "Family (4)", count: 4 },
+  { label: "Group (6+)", count: 6 },
+];
+
 const PREFERENCE_CHIPS = [
   "Take me somewhere unexplored",
   "Keep it calm, minimal travel between stops",
@@ -63,6 +71,9 @@ function Home() {
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState<string | null>(null);
   const [originInput, setOriginInput] = useState("");
+  const [travelerCount, setTravelerCount] = useState<number | null>(null);
+  const [travelerInput, setTravelerInput] = useState("");
+  const [askingTravelers, setAskingTravelers] = useState(false);
   const [askingPreference, setAskingPreference] = useState(false);
   const [preference, setPreference] = useState("");
   const [preferenceInput, setPreferenceInput] = useState("");
@@ -95,8 +106,14 @@ function Home() {
     }
   };
 
-  const run = async (text: string, from: string | null, pref: string) => {
+  const run = async (
+    text: string,
+    from: string | null,
+    pref: string,
+    count: number | null,
+  ) => {
     if (!text || loading) return;
+    setAskingTravelers(false);
     setLoading(true);
     setError(null);
     setPlan(null);
@@ -106,14 +123,17 @@ function Home() {
     setSelectedStay(0);
     currentId.current = undefined;
     try {
-      const aiPlan = await askAi({ data: { prompt: text, origin: from, preference: pref } });
+      const aiPlan = await askAi({
+        data: { prompt: text, origin: from, preference: pref, travelerCount: count },
+      });
       if (import.meta.env.DEV) {
         console.log("[Explorion] raw AI response:", aiPlan.debugRaw);
         console.log("[Explorion] parsed trip plan:", aiPlan);
       }
       setPlan(aiPlan);
       if (aiPlan.origin && !from) setOrigin(aiPlan.origin);
-      if (!aiPlan.needsOrigin) persist(aiPlan);
+      if (aiPlan.travelerCount && !count) setTravelerCount(aiPlan.travelerCount);
+      if (!aiPlan.needsOrigin && !aiPlan.needsTravelerCount) persist(aiPlan);
     } catch (err) {
       console.error("[Explorion] trip generation failed for prompt:", text, err);
       setPlan(null);
@@ -139,18 +159,33 @@ function Home() {
     const clean = pref.trim();
     setPreference(clean);
     setAskingPreference(false);
-    void run(prompt.trim(), origin, clean);
+    void run(prompt.trim(), origin, clean, travelerCount);
   };
 
   const handlePlan = () =>
-    preference ? void run(prompt.trim(), origin, preference) : openPreference();
+    preference
+      ? void run(prompt.trim(), origin, preference, travelerCount)
+      : openPreference();
 
   const chooseOrigin = (city: string) => {
     const clean = city.trim();
     if (!clean) return;
     setOrigin(clean);
     setOriginInput("");
-    void run(prompt.trim(), clean, preference);
+    void run(prompt.trim(), clean, preference, travelerCount);
+  };
+
+  const chooseTravelers = (count: number) => {
+    if (!Number.isFinite(count) || count < 1) return;
+    const clean = Math.round(count);
+    setTravelerCount(clean);
+    setTravelerInput("");
+    void run(prompt.trim(), origin, preference, clean);
+  };
+
+  const editTravelers = () => {
+    setTravelerInput(travelerCount ? String(travelerCount) : "");
+    setAskingTravelers(true);
   };
 
   const editPreference = () => {
@@ -221,6 +256,8 @@ function Home() {
       currentId.current = trip.id;
       setPlan(trip.plan);
       setOrigin(trip.plan.origin);
+      setTravelerCount(trip.plan.travelerCount ?? null);
+      setAskingTravelers(false);
       setPreference(trip.plan.tripPreference ?? "");
       setMarks({});
       setSelectedStay(0);
@@ -235,6 +272,7 @@ function Home() {
   };
 
   const needsOrigin = !!plan?.needsOrigin;
+  const needsTravelers = !needsOrigin && (askingTravelers || !!plan?.needsTravelerCount);
 
   return (
     <div className="min-h-screen">
@@ -337,7 +375,8 @@ function Home() {
             />
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs text-muted-foreground">
-                {origin ? `Departing from ${origin}` : "Tip: press ⌘/Ctrl + Enter"}
+                {origin ? `Departing from ${origin} · ` : ""}Any budget you mention is
+                treated as per person
               </p>
               <button
                 onClick={handlePlan}
@@ -473,6 +512,52 @@ function Home() {
               </button>
             </div>
           </section>
+        ) : needsTravelers ? (
+          <section className="panel-navy mt-6 space-y-4 p-8">
+            <p className="flex items-center gap-2 text-sm text-foreground">
+              <Users className="size-4 text-primary" /> How many people are travelling? We
+              price everything per person.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {TRAVELER_CHIPS.map((chip) => (
+                <button
+                  key={chip.label}
+                  onClick={() => chooseTravelers(chip.count)}
+                  className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground transition hover:border-primary hover:text-primary"
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                value={travelerInput}
+                onChange={(e) => setTravelerInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") chooseTravelers(Number(travelerInput));
+                }}
+                placeholder="Or enter a number"
+                className="w-44 rounded-xl border border-border bg-transparent px-4 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary"
+              />
+              <button
+                onClick={() => chooseTravelers(Number(travelerInput))}
+                disabled={!(Number(travelerInput) >= 1)}
+                className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition hover:brightness-110 disabled:opacity-50"
+              >
+                Use this count <ArrowRight className="size-4" />
+              </button>
+              {askingTravelers && plan && !plan.needsTravelerCount ? (
+                <button
+                  onClick={() => setAskingTravelers(false)}
+                  className="text-sm text-muted-foreground underline underline-offset-4 transition hover:text-primary"
+                >
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+          </section>
         ) : plan ? (
           <section className="border-t border-border pt-12">
             <p className="mb-6 text-sm text-muted-foreground">
@@ -482,6 +567,7 @@ function Home() {
             <TripDashboard
               plan={plan}
               onEditPreference={editPreference}
+              onEditTravelers={editTravelers}
               marks={marks}
               onToggleMark={toggleMark}
               selectedStay={selectedStay}

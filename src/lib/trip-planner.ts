@@ -44,10 +44,24 @@ export type AgentLabels = {
   budget: string;
 };
 
+export type VisaType = "not_required" | "visa_on_arrival" | "e_visa" | "advance_visa";
+
+export type VisaInfo = {
+  required: boolean;
+  type: VisaType;
+  estimatedCost: { low: number; high: number; currency: string };
+  processingTime: string;
+  applyBy: string;
+  howToApply: string;
+  notes: string;
+};
+
 export type TripPlan = {
   destination: string;
   origin: string | null;
   needsOrigin: boolean;
+  travelerCount: number | null;
+  needsTravelerCount: boolean;
   days: number;
   budget: number;
   month: string;
@@ -59,7 +73,20 @@ export type TripPlan = {
   style?: string;
   vibe?: string;
   tripPreference?: string;
+  international?: boolean;
+  visa?: VisaInfo | null;
+  visaUnavailable?: boolean;
   debugRaw?: string;
+};
+
+export const isValidTravelerCount = (n: unknown): n is number =>
+  typeof n === "number" && Number.isFinite(n) && n >= 1;
+
+export const VISA_STATUS: Record<VisaType, { label: string; tone: "ok" | "warn" | "alert" }> = {
+  not_required: { label: "No Visa Required", tone: "ok" },
+  visa_on_arrival: { label: "Visa on Arrival", tone: "warn" },
+  e_visa: { label: "e-Visa Required", tone: "warn" },
+  advance_visa: { label: "Visa Required", tone: "alert" },
 };
 
 export const MODE_LABELS: Record<TransportModeId, string> = {
@@ -321,6 +348,8 @@ export function planTrip(prompt: string): TripPlan {
     destination: dest.name,
     origin: null,
     needsOrigin: false,
+    travelerCount: 1,
+    needsTravelerCount: false,
     days,
 
 
