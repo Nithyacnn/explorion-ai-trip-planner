@@ -19,8 +19,19 @@ import {
   CircleDot,
   Ticket,
   X,
+  Users,
+  Stamp,
+  AlertTriangle,
+  Clock,
 } from "lucide-react";
-import { formatINR, type Stay, type TransportModeId, type TripPlan } from "@/lib/trip-planner";
+import {
+  formatINR,
+  isValidTravelerCount,
+  VISA_STATUS,
+  type Stay,
+  type TransportModeId,
+  type TripPlan,
+} from "@/lib/trip-planner";
 import { SectionBoundary } from "@/components/SectionBoundary";
 import { staySearchLink, transportSearchLink } from "@/lib/booking-links";
 
@@ -34,6 +45,17 @@ const MODE_ICONS: Record<TransportModeId, typeof Plane> = {
 };
 
 const AI_CAPTION = "AI-estimated ranges, not live pricing.";
+const VISA_CAPTION =
+  "Visa requirements are AI-estimated — verify with official sources before travel.";
+
+function CardError({ children }: { children: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-current/25 p-4 text-sm">
+      <AlertTriangle className="size-4 shrink-0 opacity-70" />
+      <span className="opacity-80">{children}</span>
+    </div>
+  );
+}
 
 function AgentTag({ label }: { label?: string | undefined }) {
   if (!label) return null;
@@ -82,6 +104,7 @@ function MarkToggle({
 export type DashboardProps = {
   plan: TripPlan;
   onEditPreference?: () => void;
+  onEditTravelers?: () => void;
   marks: Record<string, boolean>;
   onToggleMark: (key: string) => void;
   selectedStay: number;
@@ -92,6 +115,7 @@ export type DashboardProps = {
 export function TripDashboard({
   plan,
   onEditPreference,
+  onEditTravelers,
   marks,
   onToggleMark,
   selectedStay,
@@ -114,11 +138,18 @@ export function TripDashboard({
         ? { ...b, amount: Math.round(stay.pricePerNight * Math.max(1, plan.days)) }
         : { ...b },
     );
+    const visa = plan.international ? plan.visa : null;
+    if (visa?.required && visa.estimatedCost.currency.toUpperCase() === "INR") {
+      const avg = Math.round((visa.estimatedCost.low + visa.estimatedCost.high) / 2);
+      if (avg > 0) items.push({ label: "Visa (est.)", amount: avg, pct: 0 });
+    }
     const total = items.reduce((s, b) => s + b.amount, 0) || 1;
     return items.map((b) => ({ ...b, pct: Math.round((b.amount / total) * 100) }));
-  }, [plan.budgetBreakdown, plan.days, stay]);
+  }, [plan.budgetBreakdown, plan.days, plan.international, plan.visa, stay]);
 
   const total = breakdown.reduce((s, b) => s + b.amount, 0) || plan.budget;
+  const travelers = isValidTravelerCount(plan.travelerCount) ? plan.travelerCount : null;
+  const budgetOk = travelers !== null;
   const maxPct = Math.max(1, ...breakdown.map((b) => b.pct));
 
   const startBooking = () => {
@@ -150,6 +181,20 @@ export function TripDashboard({
             <Pencil className="size-3 shrink-0 opacity-70" />
           </button>
         ) : null}
+        {onEditTravelers ? (
+          <button
+            onClick={onEditTravelers}
+            className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-3.5 py-1.5 text-xs text-primary transition hover:bg-primary hover:text-primary-foreground"
+          >
+            <Users className="size-3 shrink-0" />
+            <span>
+              {isValidTravelerCount(plan.travelerCount)
+                ? `${plan.travelerCount} ${plan.travelerCount === 1 ? "traveller" : "travellers"}`
+                : "Set traveller count"}
+            </span>
+            <Pencil className="size-3 shrink-0 opacity-70" />
+          </button>
+        ) : null}
         {changeSummary ? (
           <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3.5 py-1.5 text-xs text-primary">
             <BadgeCheck className="size-3" /> {changeSummary}
@@ -165,7 +210,11 @@ export function TripDashboard({
           </h2>
           <p className="text-sm text-muted-foreground">
             {plan.origin ? `${plan.origin} → ${plan.destination} · ` : ""}
-            {plan.month} · Budget {formatINR(total)} · {days.length}-day itinerary
+            {plan.month} · Budget {formatINR(total)} per person
+            {travelers && travelers > 1
+              ? ` · ${formatINR(total * travelers)} for ${travelers} travellers`
+              : ""}{" "}
+            · {days.length}-day itinerary
           </p>
         </div>
         <button
@@ -178,14 +227,15 @@ export function TripDashboard({
       </header>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Transport */}
+        {/* Transport + visa */}
+        <div className="space-y-6 lg:col-span-1">
         <SectionBoundary name="transport">
-          <section className="card-ivory p-6 lg:col-span-1">
+          <section className="card-ivory p-6">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="font-display text-xl">Transport options</h3>
                 <p className="mt-1 text-xs opacity-70">
-                  Round-trip, per person{plan.origin ? ` · from ${plan.origin}` : ""}
+                  Round-trip fares shown per person{plan.origin ? ` · from ${plan.origin}` : ""}
                 </p>
               </div>
               <MarkToggle
@@ -251,6 +301,73 @@ export function TripDashboard({
             <p className="mt-4 text-[11px] opacity-60">{AI_CAPTION}</p>
           </section>
         </SectionBoundary>
+
+        {plan.international ? (
+          <SectionBoundary name="visa">
+            <section className="card-ivory p-6">
+              <h3 className="font-display flex items-center gap-2 text-xl">
+                <Stamp className="size-5" /> Visa info
+              </h3>
+              {!plan.visa ? (
+                <div className="mt-4">
+                  <CardError>
+                    Couldn&apos;t determine visa requirements — please verify with the
+                    destination&apos;s embassy or official immigration site.
+                  </CardError>
+                </div>
+              ) : (
+                <>
+                  <span
+                    className={`mt-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wider ${
+                      VISA_STATUS[plan.visa.type].tone === "ok"
+                        ? "bg-emerald-500/20 text-emerald-700"
+                        : VISA_STATUS[plan.visa.type].tone === "warn"
+                          ? "bg-amber-500/20 text-amber-700"
+                          : "bg-red-500/20 text-red-700"
+                    }`}
+                  >
+                    <BadgeCheck className="size-3" /> {VISA_STATUS[plan.visa.type].label}
+                  </span>
+
+                  {plan.visa.type === "advance_visa" || plan.visa.type === "e_visa" ? (
+                    <p className="mt-3 flex items-start gap-2 rounded-xl bg-primary/12 p-3 text-xs font-semibold leading-snug">
+                      <Clock className="mt-0.5 size-3.5 shrink-0" /> {plan.visa.applyBy}
+                    </p>
+                  ) : null}
+
+                  <dl className="mt-4 space-y-2 text-xs">
+                    <div className="flex justify-between gap-3">
+                      <dt className="opacity-70">Estimated fee (per traveller)</dt>
+                      <dd className="text-right font-semibold tabular-nums">
+                        {plan.visa.estimatedCost.currency}{" "}
+                        {plan.visa.estimatedCost.low.toLocaleString("en-IN")} –{" "}
+                        {plan.visa.estimatedCost.high.toLocaleString("en-IN")}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="opacity-70">Processing time</dt>
+                      <dd className="text-right font-semibold">{plan.visa.processingTime}</dd>
+                    </div>
+                  </dl>
+
+                  {plan.visa.howToApply ? (
+                    <p className="mt-3 text-xs leading-snug opacity-80">
+                      <span className="font-semibold">How to apply · </span>
+                      {plan.visa.howToApply}
+                    </p>
+                  ) : null}
+                  {plan.visa.notes ? (
+                    <p className="mt-2 text-xs italic leading-snug opacity-70">
+                      {plan.visa.notes}
+                    </p>
+                  ) : null}
+                </>
+              )}
+              <p className="mt-4 text-[11px] opacity-60">{VISA_CAPTION}</p>
+            </section>
+          </SectionBoundary>
+        ) : null}
+        </div>
 
         {/* Itinerary */}
         <SectionBoundary name="itinerary">
@@ -349,7 +466,9 @@ export function TripDashboard({
               <h3 className="font-display flex items-center gap-2 text-xl">
                 <BedDouble className="size-5" /> Where to stay
               </h3>
-              <p className="mt-1 text-xs opacity-70">Tap an option to use it in your budget.</p>
+              <p className="mt-1 text-xs opacity-70">
+              Tap an option to use it in your budget. Nightly prices are the per-person share.
+            </p>
             </div>
             <MarkToggle marked={!!marks["stay"]} onToggle={() => onToggleMark("stay")} />
           </div>
@@ -419,13 +538,25 @@ export function TripDashboard({
               <Wallet className="size-5" /> Budget breakdown
             </h3>
             <div className="flex items-center gap-3">
-              <p className="text-sm opacity-70">Total {formatINR(total)}</p>
+              <p className="text-sm opacity-70">
+                Total {formatINR(total)} · per person
+                {travelers && travelers > 1
+                  ? ` · ${formatINR(total * travelers)} for ${travelers} travellers`
+                  : ""}
+              </p>
               <MarkToggle marked={!!marks["budget"]} onToggle={() => onToggleMark("budget")} />
             </div>
           </div>
           <AgentTag label={plan.agentLabels?.budget} />
 
-          {breakdown.length === 0 ? (
+          {!budgetOk ? (
+            <div className="mt-4">
+              <CardError>
+                Couldn&apos;t load this part — traveller count is missing, so per-person costs
+                can&apos;t be calculated. Set the traveller count above and retry.
+              </CardError>
+            </div>
+          ) : breakdown.length === 0 ? (
             <div className="mt-4">
               <Empty>No budget breakdown available.</Empty>
             </div>
@@ -449,7 +580,9 @@ export function TripDashboard({
               ))}
             </div>
           )}
-          <p className="mt-5 text-[11px] opacity-60">{AI_CAPTION}</p>
+          <p className="mt-5 text-[11px] opacity-60">
+            All figures are per person. {AI_CAPTION}
+          </p>
         </section>
       </SectionBoundary>
 

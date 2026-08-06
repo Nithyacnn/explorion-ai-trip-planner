@@ -6,6 +6,7 @@ import { MODE_LABELS, type TripPlan, type TransportModeId } from "@/lib/trip-pla
 const Input = z.object({
   prompt: z.string(),
   origin: z.string().nullable().optional(),
+  travelerCount: z.number().nullable().optional(),
   preference: z.string().nullable().optional(),
 });
 
@@ -53,10 +54,28 @@ const breakdownSchema = z.object({
   activities: z.number(),
 });
 
+const visaSchema = z.object({
+  required: z.boolean(),
+  type: z.enum(["not_required", "visa_on_arrival", "e_visa", "advance_visa"]),
+  estimated_cost: z.object({
+    low: z.number(),
+    high: z.number(),
+    currency: z.string(),
+  }),
+  processing_time: z.string(),
+  apply_by: z.string(),
+  how_to_apply: z.string(),
+  notes: z.string(),
+});
+
 const planSchema = z.object({
   destination: z.string(),
   origin: z.string().nullable(),
   needs_origin: z.boolean(),
+  traveler_count: z.number().nullable(),
+  needs_traveler_count: z.boolean(),
+  international: z.boolean().nullable().optional(),
+  visa: visaSchema.nullable().optional(),
   trip_preference: z.string(),
   duration_days: z.number(),
   budget_total: z.number(),
@@ -81,7 +100,9 @@ const planSchema = z.object({
 
 const BLOCK_SHAPE = `{"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean}],"time_range":string,"overpacked":boolean}`;
 
-const JSON_SHAPE = `{"destination":string,"origin":string|null,"needs_origin":boolean,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options":[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary":[{"day":number,"early_morning":${BLOCK_SHAPE},"morning":${BLOCK_SHAPE},"afternoon":${BLOCK_SHAPE},"evening":${BLOCK_SHAPE}}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}`;
+const VISA_SHAPE = `{"required":boolean,"type":"not_required"|"visa_on_arrival"|"e_visa"|"advance_visa","estimated_cost":{"low":number,"high":number,"currency":string},"processing_time":string,"apply_by":string,"how_to_apply":string,"notes":string}`;
+
+const JSON_SHAPE = `{"destination":string,"origin":string|null,"needs_origin":boolean,"traveler_count":number|null,"needs_traveler_count":boolean,"international":boolean,"visa":${VISA_SHAPE}|null,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options":[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary":[{"day":number,"early_morning":${BLOCK_SHAPE},"morning":${BLOCK_SHAPE},"afternoon":${BLOCK_SHAPE},"evening":${BLOCK_SHAPE}}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}`;
 
 const SYSTEM = `You are Explorion, a travel planning and budgeting expert (INR, India-first but able to plan international trips).
 
@@ -95,6 +116,11 @@ ${JSON_SHAPE}
 Rules:
 - Parse destination, duration_days (default 3) and budget_total from the free-text prompt. If no budget is stated, estimate a realistic one.
 - origin: if the prompt mentions a starting city ("from Chennai") use it. If no origin is stated and none is supplied, set "origin": null and "needs_origin": true. Never guess an origin.
+- traveler_count: extract from the prompt when stated or clearly implied ("solo" = 1, "couple"/"me and my partner"/"for 2" = 2, "family of 4" = 4, "3 friends" = 3, "group of 6" = 6). If no count is stated or inferable and none is supplied, set "traveler_count": null and "needs_traveler_count": true. Never guess a count.
+- PER-PERSON BUDGET (critical): budget_total, every budget_breakdown value, every stay price_per_night and every transport low/high are PER PERSON. Any budget the traveller states is a per-person figure. Costs shared across the group (stay rooms, private cabs, own_vehicle fuel/tolls) must be DIVIDED by traveler_count; individual costs (meals, activities, tickets, flights, train seats) stay as-is per person. Larger groups therefore show lower per-person stay costs.
+- stay_options price_per_night is the per-person share of the nightly room cost for the given traveler_count (e.g. a ₹4,000 room shared by 2 travellers is 2000).
+- international: true only when the origin city's country differs from the destination's country. When false (or origin unknown), set "visa": null and do not invent visa data.
+- visa: for international trips only, fill every field for a traveller holding the origin country's passport. "required" is false only for genuine visa-free access. estimated_cost is a realistic per-traveller fee range with an explicit currency code. how_to_apply describes the correct official channel (portal type or embassy/consulate) — never invent a specific URL. notes is one short caveat line. If you genuinely cannot determine the requirement, still return the object with type "advance_visa", required true and notes explaining the uncertainty.
 - transport.available_modes: ONLY include modes that genuinely exist for this origin→destination pair. Include "train"/"bus"/"own_vehicle" only when a real rail/road route exists (same country or connected region) AND the road/rail journey is under roughly 15-18 hours. For overseas or otherwise air-only routes, return ONLY the flight mode. Never fabricate a bus or train for a route that has none.
 - Each mode: low/high are realistic ROUND-TRIP per-person costs for that exact pair; "duration" is a human string like "12 hrs each way"; "notes" is one short practical line. For "own_vehicle", low/high estimate round-trip FUEL + TOLL cost for the route (not a ticket price).
 - recommended_mode must be one of the modes you returned. recommended_reason must weigh the traveller's stated style/preference and budget against cost AND duration — a genuine trade-off sentence (e.g. "flight recommended: saves 14 hours for only ₹2,000 more on a comfort-first trip"), never just "cheapest".
@@ -119,7 +145,7 @@ Activity density (there is NO fixed cap of 2 stops):
 - "why" is one short clause explaining the pick; "optional" is true only for a genuinely skippable extra or an alternate meal pick.
 - If the stops plus their travel times realistically exceed the block's time_range, set "overpacked": true on that block (otherwise false).
 - If trip_preference names a theme (cafe hunting, street food, nightlife, shopping, adventure), bias stops in MULTIPLE blocks across the day toward that theme, while still covering 06:00–22:00.
-- budget_breakdown: stay + transit + meals + activities must sum to approximately budget_total, and the top-rated stay's price_per_night × duration_days should roughly match budget_breakdown.stay.
+- budget_breakdown: all four values are per person and must sum to approximately budget_total (for international trips include any per-traveller visa fee inside "activities" only if it is not shown separately — prefer leaving visa fees out of the four buckets, the UI adds them), and the top-rated stay's price_per_night × duration_days should roughly match budget_breakdown.stay.
 - agent_labels must be exactly: transport "Research Agent", stay "Property Verification Agent", itinerary "Itinerary Builder Agent", budget_breakdown "Budget Optimisation Agent".
 - month: the travel month mentioned, else "Anytime". style: romantic, solo, luxury, budget, family, adventure or balanced. vibe: a short 3-6 word description.
 - trip_preference: echo the traveller's free-text preference exactly (empty string if none).
@@ -235,6 +261,21 @@ function toModes(modes: z.infer<typeof modeSchema>[]) {
   }));
 }
 
+function toVisa(v: z.infer<typeof visaSchema> | null | undefined) {
+  if (!v) return null;
+  const low = Math.max(0, Math.round(v.estimated_cost?.low ?? 0));
+  const high = Math.max(low, Math.round(v.estimated_cost?.high ?? low));
+  return {
+    required: v.required === true || v.type !== "not_required",
+    type: v.type,
+    estimatedCost: { low, high, currency: v.estimated_cost?.currency?.trim() || "INR" },
+    processingTime: v.processing_time?.trim() || "Varies",
+    applyBy: v.apply_by?.trim() || "Not applicable",
+    howToApply: v.how_to_apply?.trim() || "",
+    notes: v.notes?.trim() || "",
+  };
+}
+
 function toStays(options: z.infer<typeof stayOptionSchema>[]) {
   return options
     .map((s) => ({
@@ -255,6 +296,11 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
       ? `\nThe traveller is departing from: ${data.origin}. Use it as the origin and set needs_origin to false.`
       : "";
 
+    const travelerLine =
+      typeof data.travelerCount === "number" && data.travelerCount >= 1
+        ? `\nNumber of travellers: ${Math.round(data.travelerCount)}. Use it as traveler_count and set needs_traveler_count to false.`
+        : "";
+
     const preference = data.preference?.trim() ?? "";
     const preferenceLine = preference
       ? `\nTrip preference (free text, shape the whole plan around it): ${preference}`
@@ -262,7 +308,7 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
 
     const text = await callAi(
       SYSTEM,
-      `${data.prompt}${originLine}${preferenceLine}\n\nReturn ONLY the raw JSON object described in the system message.`,
+      `${data.prompt}${originLine}${travelerLine}${preferenceLine}\nAny budget figure in the prompt is PER PERSON.\n\nReturn ONLY the raw JSON object described in the system message.`,
       "plan",
     );
 
@@ -274,6 +320,17 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
     const raw = parsed.data;
 
     const origin = data.origin?.trim() || raw.origin?.trim() || null;
+    const suppliedCount =
+      typeof data.travelerCount === "number" && data.travelerCount >= 1
+        ? Math.round(data.travelerCount)
+        : null;
+    const rawCount =
+      typeof raw.traveler_count === "number" && raw.traveler_count >= 1
+        ? Math.round(raw.traveler_count)
+        : null;
+    const travelerCount = suppliedCount ?? rawCount;
+    const international = origin ? raw.international === true : false;
+    const visa = international ? toVisa(raw.visa) : null;
     const days = Math.max(1, Math.round(raw.duration_days || raw.itinerary.length || 3));
     const itinerary = raw.itinerary
       .slice(0, days)
@@ -283,6 +340,11 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
       destination: raw.destination,
       origin,
       needsOrigin: !origin,
+      travelerCount,
+      needsTravelerCount: !travelerCount,
+      international,
+      visa,
+      visaUnavailable: international && !visa,
       days,
       budget: Math.round(raw.budget_total || 0),
       month: raw.month || "Anytime",
