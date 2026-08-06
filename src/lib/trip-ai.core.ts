@@ -17,11 +17,24 @@ const modeSchema = z.object({
   notes: z.string(),
 });
 
+const stopSchema = z.object({
+  activity: z.string(),
+  why: z.string().nullable().optional(),
+  travel_time_from_previous: z.string().nullable().optional(),
+  optional: z.boolean().nullable().optional(),
+});
+
+const blockSchema = z.object({
+  stops: z.array(stopSchema),
+  time_range: z.string().nullable().optional(),
+  overpacked: z.boolean().nullable().optional(),
+});
+
 const daySchema = z.object({
   day: z.number(),
-  morning: z.string(),
-  afternoon: z.string(),
-  evening: z.string(),
+  morning: blockSchema,
+  afternoon: blockSchema,
+  evening: blockSchema,
 });
 
 const stayOptionSchema = z.object({
@@ -65,7 +78,9 @@ const planSchema = z.object({
   }),
 });
 
-const JSON_SHAPE = `{"destination":string,"origin":string|null,"needs_origin":boolean,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options":[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary":[{"day":number,"morning":string,"afternoon":string,"evening":string}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}`;
+const BLOCK_SHAPE = `{"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean}],"time_range":string,"overpacked":boolean}`;
+
+const JSON_SHAPE = `{"destination":string,"origin":string|null,"needs_origin":boolean,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options":[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary":[{"day":number,"morning":${BLOCK_SHAPE},"afternoon":${BLOCK_SHAPE},"evening":${BLOCK_SHAPE}}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}`;
 
 const SYSTEM = `You are Explorion, a travel planning and budgeting expert (INR, India-first but able to plan international trips).
 
@@ -83,7 +98,14 @@ Rules:
 - Each mode: low/high are realistic ROUND-TRIP per-person costs for that exact pair; "duration" is a human string like "12 hrs each way"; "notes" is one short practical line. For "own_vehicle", low/high estimate round-trip FUEL + TOLL cost for the route (not a ticket price).
 - recommended_mode must be one of the modes you returned. recommended_reason must weigh the traveller's stated style/preference and budget against cost AND duration — a genuine trade-off sentence (e.g. "flight recommended: saves 14 hours for only ₹2,000 more on a comfort-first trip"), never just "cheapest".
 - stay_options: exactly 3 realistic distinct properties that each fit within the stated budget, with name, type (hotel/homestay/resort/hostel), price_per_night, rating (0-5) and a one-line "why". Sort by rating descending.
-- itinerary: exactly duration_days entries, each with specific named morning, afternoon and evening activities at the destination, tailored to the detected travel style.
+- itinerary: exactly duration_days entries. Each day has three blocks (morning, afternoon, evening); each block is an object with "stops", "time_range" (e.g. "08:00 – 12:00") and "overpacked".
+
+Activity density (important — there is NO fixed cap of 2 stops):
+- Set target density from the traveller's pace / trip_preference: calm, relaxed or "less travel" → exactly 1 stop per block (fewer, longer, unhurried visits); unspecified → 1-2 stops; adventurous, packed or "see everything" → up to 3-4 stops per block, but ONLY where the destination genuinely supports it and real travel times allow.
+- Every stop after the first in a block MUST have "travel_time_from_previous" as a human string ("12 min walk", "25 min drive"). The first stop of a block uses an empty string.
+- Never add a stop just to fill space. Remote or rural destinations with long distances between sights stay sparse — 1 stop is a valid, good block.
+- "why" is one short clause explaining the pick; "optional" is true only for a genuinely skippable extra.
+- If the stops plus their travel times realistically exceed the block's time_range, set "overpacked": true on that block (otherwise false) instead of pretending it fits.
 - budget_breakdown: stay + transit + meals + activities must sum to approximately budget_total, and the top-rated stay's price_per_night × duration_days should roughly match budget_breakdown.stay.
 - agent_labels must be exactly: transport "Research Agent", stay "Property Verification Agent", itinerary "Itinerary Builder Agent", budget_breakdown "Budget Optimisation Agent".
 - month: the travel month mentioned, else "Anytime". style: romantic, solo, luxury, budget, family, adventure or balanced. vibe: a short 3-6 word description.
@@ -128,6 +150,23 @@ async function callAi(system: string, prompt: string, tag: string): Promise<stri
 }
 
 
+function toSlots(d: z.infer<typeof daySchema>) {
+  return [d.morning, d.afternoon, d.evening].map((block, j) => ({
+    label: SLOT_LABELS[j] ?? "Morning",
+    tag: block?.time_range?.trim() || SLOT_TAGS[j] || "",
+    overpacked: block?.overpacked === true,
+    stops: (Array.isArray(block?.stops) ? block.stops : [])
+      .filter((s) => s && typeof s.activity === "string" && s.activity.trim())
+      .map((s, i) => ({
+        activity: s.activity.trim(),
+        why: s.why?.trim() || undefined,
+        travelTimeFromPrevious:
+          i > 0 ? s.travel_time_from_previous?.trim() || undefined : undefined,
+        optional: s.optional === true,
+      })),
+  }));
+}
+
 function toDay(d: z.infer<typeof daySchema>, index: number, days: number, destination: string) {
   return {
     day: index + 1,
@@ -137,11 +176,7 @@ function toDay(d: z.infer<typeof daySchema>, index: number, days: number, destin
         : index === days - 1
           ? "Slow morning & departure"
           : `Exploring ${destination}`,
-    slots: [d.morning, d.afternoon, d.evening].map((activity, j) => ({
-      label: SLOT_LABELS[j] ?? "Morning",
-      tag: SLOT_TAGS[j] ?? "",
-      activity,
-    })),
+    slots: toSlots(d),
   };
 }
 
@@ -270,11 +305,12 @@ You receive an existing trip plan JSON and a refinement request. You must change
 OUTPUT FORMAT: one raw JSON object, no markdown, no code fences, no prose. First character "{", last "}". INR integers.
 
 Shape:
-{"changed":["transport"|"stay"|"budget"|"day:<n>"...],"summary":string,"transport"?:{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options"?:[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary_days"?:[{"day":number,"morning":string,"afternoon":string,"evening":string}],"budget_breakdown"?:{"stay":number,"transit":number,"meals":number,"activities":number}}
+{"changed":["transport"|"stay"|"budget"|"day:<n>"...],"summary":string,"transport"?:{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options"?:[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary_days"?:[{"day":number,"morning":BLOCK,"afternoon":BLOCK,"evening":BLOCK}] where BLOCK = {"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean}],"time_range":string,"overpacked":boolean},"budget_breakdown"?:{"stay":number,"transit":number,"meals":number,"activities":number}}
 
 Rules:
 - "changed" lists exactly the sections you actually rewrote; "summary" is a short human sentence like "Updated: Day 2 itinerary, stay options".
 - itinerary_days contains ONLY the days you changed, each keeping its original "day" number.
+- Block density follows the traveller's pace: calm → 1 stop per block, default → 1-2, adventurous/packed → up to 3-4 where realistic. Every stop after the first needs "travel_time_from_previous"; never pad a block with filler; set "overpacked": true when the stops plus travel realistically exceed time_range.
 - Only include modes that genuinely exist for the route; air-only routes return only flight. own_vehicle costs are fuel + tolls.
 - stay_options is always 3 options within budget, sorted by rating descending.
 - Keep everything consistent with the untouched parts of the plan (same destination, duration, budget).
@@ -326,11 +362,7 @@ export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePa
       patch.itineraryDays = raw.itinerary_days.map((d) => ({
         day: Math.round(d.day),
         title: "",
-        slots: [d.morning, d.afternoon, d.evening].map((activity, j) => ({
-          label: SLOT_LABELS[j] ?? "Morning",
-          tag: SLOT_TAGS[j] ?? "",
-          activity,
-        })),
+        slots: toSlots(d),
       }));
     }
     if (raw.budget_breakdown) {
