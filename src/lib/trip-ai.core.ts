@@ -78,7 +78,9 @@ const planSchema = z.object({
   }),
 });
 
-const JSON_SHAPE = `{"destination":string,"origin":string|null,"needs_origin":boolean,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options":[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary":[{"day":number,"morning":string,"afternoon":string,"evening":string}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}`;
+const BLOCK_SHAPE = `{"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean}],"time_range":string,"overpacked":boolean}`;
+
+const JSON_SHAPE = `{"destination":string,"origin":string|null,"needs_origin":boolean,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options":[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary":[{"day":number,"morning":${BLOCK_SHAPE},"afternoon":${BLOCK_SHAPE},"evening":${BLOCK_SHAPE}}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}`;
 
 const SYSTEM = `You are Explorion, a travel planning and budgeting expert (INR, India-first but able to plan international trips).
 
