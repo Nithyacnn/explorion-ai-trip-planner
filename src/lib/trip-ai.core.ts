@@ -8,6 +8,8 @@ const Input = z.object({
   origin: z.string().nullable().optional(),
   travelerCount: z.number().nullable().optional(),
   preference: z.string().nullable().optional(),
+  startDate: z.string().nullable().optional(),
+  endDate: z.string().nullable().optional(),
 });
 
 const modeSchema = z.object({
@@ -74,6 +76,14 @@ const planSchema = z.object({
   needs_origin: z.boolean(),
   traveler_count: z.number().nullable(),
   needs_traveler_count: z.boolean(),
+  travel_dates: z
+    .object({
+      start_date: z.string().nullable(),
+      end_date: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
+  needs_dates: z.boolean().nullable().optional(),
   international: z.boolean().nullable().optional(),
   visa: visaSchema.nullable().optional(),
   trip_preference: z.string(),
