@@ -11,6 +11,7 @@ import {
   Briefcase,
   ChevronDown,
   Users,
+  CalendarDays,
   Trash2,
   AlertTriangle,
 } from "lucide-react";
@@ -42,11 +43,49 @@ export const Route = createFileRoute("/")({
 });
 
 const CHIPS = [
-  "3 days in Goa under ₹20,000 in October",
-  "5 days in Coorg under ₹25,000",
-  "Weekend in Pondicherry under ₹12,000",
-  "4 days in Manali under ₹30,000 in December",
+  "Weekend in Pondicherry from Chennai, 2 people, ₹12,000 per person, next weekend",
+  "5 days in Manali from Delhi, solo, ₹15,000 per person, first week of December",
+  "3 days in Goa from Mumbai, family of 4, ₹20,000 per person",
 ];
+
+const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+const addDays = (d: Date, n: number) => {
+  const next = new Date(d);
+  next.setDate(next.getDate() + n);
+  return next;
+};
+
+const nextSaturday = (weeksAhead: number) => {
+  const today = new Date();
+  const delta = ((6 - today.getDay() + 7) % 7 || 7) + weeksAhead * 7;
+  return addDays(today, delta);
+};
+
+const DATE_CHIPS: { label: string; start: () => string; end: () => string }[] = [
+  {
+    label: "This weekend",
+    start: () => iso(nextSaturday(0)),
+    end: () => iso(addDays(nextSaturday(0), 1)),
+  },
+  {
+    label: "Next weekend",
+    start: () => iso(nextSaturday(1)),
+    end: () => iso(addDays(nextSaturday(1), 1)),
+  },
+  {
+    label: "In 2 weeks",
+    start: () => iso(addDays(new Date(), 14)),
+    end: () => iso(addDays(new Date(), 16)),
+  },
+];
+
+const prettyDate = (value: string) =>
+  new Date(`${value}T00:00:00`).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 
 const ORIGIN_CHIPS = ["Bengaluru", "Delhi", "Mumbai", "Chennai"];
 
@@ -74,6 +113,11 @@ function Home() {
   const [travelerCount, setTravelerCount] = useState<number | null>(null);
   const [travelerInput, setTravelerInput] = useState("");
   const [askingTravelers, setAskingTravelers] = useState(false);
+  const [startDate, setStartDate] = useState<string | null>(null);
+  const [endDate, setEndDate] = useState<string | null>(null);
+  const [startInput, setStartInput] = useState("");
+  const [endInput, setEndInput] = useState("");
+  const [askingDates, setAskingDates] = useState(false);
   const [askingPreference, setAskingPreference] = useState(false);
   const [preference, setPreference] = useState("");
   const [preferenceInput, setPreferenceInput] = useState("");
@@ -111,9 +155,11 @@ function Home() {
     from: string | null,
     pref: string,
     count: number | null,
+    dates: { start: string | null; end: string | null } = { start: startDate, end: endDate },
   ) => {
     if (!text || loading) return;
     setAskingTravelers(false);
+    setAskingDates(false);
     setLoading(true);
     setError(null);
     setPlan(null);
@@ -124,7 +170,14 @@ function Home() {
     currentId.current = undefined;
     try {
       const aiPlan = await askAi({
-        data: { prompt: text, origin: from, preference: pref, travelerCount: count },
+        data: {
+          prompt: text,
+          origin: from,
+          preference: pref,
+          travelerCount: count,
+          startDate: dates.start,
+          endDate: dates.end,
+        },
       });
       if (import.meta.env.DEV) {
         console.log("[Explorion] raw AI response:", aiPlan.debugRaw);
@@ -133,7 +186,12 @@ function Home() {
       setPlan(aiPlan);
       if (aiPlan.origin && !from) setOrigin(aiPlan.origin);
       if (aiPlan.travelerCount && !count) setTravelerCount(aiPlan.travelerCount);
-      if (!aiPlan.needsOrigin && !aiPlan.needsTravelerCount) persist(aiPlan);
+      if (aiPlan.travelDates?.startDate && !dates.start) {
+        setStartDate(aiPlan.travelDates.startDate);
+        setEndDate(aiPlan.travelDates.endDate ?? null);
+      }
+      if (!aiPlan.needsOrigin && !aiPlan.needsTravelerCount && !aiPlan.needsDates)
+        persist(aiPlan);
     } catch (err) {
       console.error("[Explorion] trip generation failed for prompt:", text, err);
       setPlan(null);
@@ -181,6 +239,21 @@ function Home() {
     setTravelerCount(clean);
     setTravelerInput("");
     void run(prompt.trim(), origin, preference, clean);
+  };
+
+  const chooseDates = (start: string, end: string | null) => {
+    if (!start) return;
+    setStartDate(start);
+    setEndDate(end);
+    setStartInput("");
+    setEndInput("");
+    void run(prompt.trim(), origin, preference, travelerCount, { start, end });
+  };
+
+  const editDates = () => {
+    setStartInput(startDate ?? "");
+    setEndInput(endDate ?? "");
+    setAskingDates(true);
   };
 
   const editTravelers = () => {
@@ -258,6 +331,9 @@ function Home() {
       setOrigin(trip.plan.origin);
       setTravelerCount(trip.plan.travelerCount ?? null);
       setAskingTravelers(false);
+      setStartDate(trip.plan.travelDates?.startDate ?? null);
+      setEndDate(trip.plan.travelDates?.endDate ?? null);
+      setAskingDates(false);
       setPreference(trip.plan.tripPreference ?? "");
       setMarks({});
       setSelectedStay(0);
@@ -273,6 +349,8 @@ function Home() {
 
   const needsOrigin = !!plan?.needsOrigin;
   const needsTravelers = !needsOrigin && (askingTravelers || !!plan?.needsTravelerCount);
+  const needsDates =
+    !needsOrigin && !needsTravelers && (askingDates || !!plan?.needsDates);
 
   return (
     <div className="min-h-screen">
@@ -558,6 +636,60 @@ function Home() {
               ) : null}
             </div>
           </section>
+        ) : needsDates ? (
+          <section className="panel-navy mt-6 space-y-4 p-8">
+            <p className="flex items-center gap-2 text-sm text-foreground">
+              <CalendarDays className="size-4 text-primary" /> When are you travelling? We
+              use real dates for seasonal advice, fares and visa timing.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {DATE_CHIPS.map((chip) => (
+                <button
+                  key={chip.label}
+                  onClick={() => chooseDates(chip.start(), chip.end())}
+                  className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground transition hover:border-primary hover:text-primary"
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="text-xs text-muted-foreground">
+                Start date
+                <input
+                  type="date"
+                  value={startInput}
+                  onChange={(e) => setStartInput(e.target.value)}
+                  className="mt-1 block rounded-xl border border-border bg-transparent px-4 py-2.5 text-sm text-foreground outline-none focus:border-primary"
+                />
+              </label>
+              <label className="text-xs text-muted-foreground">
+                End date (optional)
+                <input
+                  type="date"
+                  value={endInput}
+                  min={startInput || undefined}
+                  onChange={(e) => setEndInput(e.target.value)}
+                  className="mt-1 block rounded-xl border border-border bg-transparent px-4 py-2.5 text-sm text-foreground outline-none focus:border-primary"
+                />
+              </label>
+              <button
+                onClick={() => chooseDates(startInput, endInput || null)}
+                disabled={!startInput}
+                className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition hover:brightness-110 disabled:opacity-50"
+              >
+                Use these dates <ArrowRight className="size-4" />
+              </button>
+              {askingDates && plan && !plan.needsDates ? (
+                <button
+                  onClick={() => setAskingDates(false)}
+                  className="text-sm text-muted-foreground underline underline-offset-4 transition hover:text-primary"
+                >
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+          </section>
         ) : plan ? (
           <section className="border-t border-border pt-12">
             <p className="mb-6 text-sm text-muted-foreground">
@@ -568,6 +700,7 @@ function Home() {
               plan={plan}
               onEditPreference={editPreference}
               onEditTravelers={editTravelers}
+              onEditDates={editDates}
               marks={marks}
               onToggleMark={toggleMark}
               selectedStay={selectedStay}

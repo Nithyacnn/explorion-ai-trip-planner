@@ -8,6 +8,8 @@ const Input = z.object({
   origin: z.string().nullable().optional(),
   travelerCount: z.number().nullable().optional(),
   preference: z.string().nullable().optional(),
+  startDate: z.string().nullable().optional(),
+  endDate: z.string().nullable().optional(),
 });
 
 const modeSchema = z.object({
@@ -74,6 +76,14 @@ const planSchema = z.object({
   needs_origin: z.boolean(),
   traveler_count: z.number().nullable(),
   needs_traveler_count: z.boolean(),
+  travel_dates: z
+    .object({
+      start_date: z.string().nullable(),
+      end_date: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
+  needs_dates: z.boolean().nullable().optional(),
   international: z.boolean().nullable().optional(),
   visa: visaSchema.nullable().optional(),
   trip_preference: z.string(),
@@ -102,7 +112,7 @@ const BLOCK_SHAPE = `{"stops":[{"activity":string,"why":string,"travel_time_from
 
 const VISA_SHAPE = `{"required":boolean,"type":"not_required"|"visa_on_arrival"|"e_visa"|"advance_visa","estimated_cost":{"low":number,"high":number,"currency":string},"processing_time":string,"apply_by":string,"how_to_apply":string,"notes":string}`;
 
-const JSON_SHAPE = `{"destination":string,"origin":string|null,"needs_origin":boolean,"traveler_count":number|null,"needs_traveler_count":boolean,"international":boolean,"visa":${VISA_SHAPE}|null,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options":[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary":[{"day":number,"early_morning":${BLOCK_SHAPE},"morning":${BLOCK_SHAPE},"afternoon":${BLOCK_SHAPE},"evening":${BLOCK_SHAPE}}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}`;
+const JSON_SHAPE = `{"destination":string,"origin":string|null,"needs_origin":boolean,"traveler_count":number|null,"needs_traveler_count":boolean,"travel_dates":{"start_date":string|null,"end_date":string|null},"needs_dates":boolean,"international":boolean,"visa":${VISA_SHAPE}|null,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options":[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary":[{"day":number,"early_morning":${BLOCK_SHAPE},"morning":${BLOCK_SHAPE},"afternoon":${BLOCK_SHAPE},"evening":${BLOCK_SHAPE}}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}`;
 
 const SYSTEM = `You are Explorion, a travel planning and budgeting expert (INR, India-first but able to plan international trips).
 
@@ -117,6 +127,9 @@ Rules:
 - Parse destination, duration_days (default 3) and budget_total from the free-text prompt. If no budget is stated, estimate a realistic one.
 - origin: if the prompt mentions a starting city ("from Chennai") use it. If no origin is stated and none is supplied, set "origin": null and "needs_origin": true. Never guess an origin.
 - traveler_count: extract from the prompt when stated or clearly implied ("solo" = 1, "couple"/"me and my partner"/"for 2" = 2, "family of 4" = 4, "3 friends" = 3, "group of 6" = 6). If no count is stated or inferable and none is supplied, set "traveler_count": null and "needs_traveler_count": true. Never guess a count.
+- travel_dates: resolve any date signal in the prompt to real calendar dates in ISO YYYY-MM-DD form, using TODAY'S DATE given in the user message ("15th to 17th August", "next weekend", "first week of October", "in 2 weeks" all resolve to actual dates; pick the next future occurrence). Set end_date consistent with duration_days when only a start is known. If no dates are stated or inferable and none are supplied, set both fields to null and "needs_dates": true — never guess dates. When dates are known set "needs_dates": false and derive "month" from start_date.
+- Use the resolved dates for season awareness: mention weather/monsoon caveats, seasonal closures, peak/off-season pricing and festival crowding in the relevant stop "why" fields, notes and recommended_reason where it genuinely matters.
+- visa.apply_by must be an explicit calendar date (and a short "X days before departure" clause) computed backwards from the actual start_date and the processing time — never a generic statement. If dates are unknown, say it depends on the confirmed departure date.
 - PER-PERSON BUDGET (critical): budget_total, every budget_breakdown value, every stay price_per_night and every transport low/high are PER PERSON. Any budget the traveller states is a per-person figure. Costs shared across the group (stay rooms, private cabs, own_vehicle fuel/tolls) must be DIVIDED by traveler_count; individual costs (meals, activities, tickets, flights, train seats) stay as-is per person. Larger groups therefore show lower per-person stay costs.
 - stay_options price_per_night is the per-person share of the nightly room cost for the given traveler_count (e.g. a ₹4,000 room shared by 2 travellers is 2000).
 - international: true only when the origin city's country differs from the destination's country. When false (or origin unknown), set "visa": null and do not invent visa data.
@@ -306,9 +319,16 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
       ? `\nTrip preference (free text, shape the whole plan around it): ${preference}`
       : `\nThe traveller skipped the preference question — use a balanced default plan and return "trip_preference": "".`;
 
+    const today = new Date().toISOString().slice(0, 10);
+    const startDate = data.startDate?.trim() || "";
+    const endDate = data.endDate?.trim() || "";
+    const datesLine = startDate
+      ? `\nConfirmed travel dates: start ${startDate}${endDate ? `, end ${endDate}` : " (derive the end date from duration_days)"}. Use them as travel_dates and set needs_dates to false.`
+      : "";
+
     const text = await callAi(
       SYSTEM,
-      `${data.prompt}${originLine}${travelerLine}${preferenceLine}\nAny budget figure in the prompt is PER PERSON.\n\nReturn ONLY the raw JSON object described in the system message.`,
+      `${data.prompt}${originLine}${travelerLine}${datesLine}${preferenceLine}\nTODAY'S DATE is ${today} — resolve every relative date against it.\nAny budget figure in the prompt is PER PERSON.\n\nReturn ONLY the raw JSON object described in the system message.`,
       "plan",
     );
 
@@ -329,6 +349,18 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
         ? Math.round(raw.traveler_count)
         : null;
     const travelerCount = suppliedCount ?? rawCount;
+    const isDate = (v: unknown): v is string =>
+      typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.trim());
+    const startDateOut = isDate(data.startDate)
+      ? data.startDate.trim()
+      : isDate(raw.travel_dates?.start_date)
+        ? raw.travel_dates!.start_date!.trim()
+        : null;
+    const endDateOut = isDate(data.endDate)
+      ? data.endDate.trim()
+      : isDate(raw.travel_dates?.end_date)
+        ? raw.travel_dates!.end_date!.trim()
+        : null;
     const international = origin ? raw.international === true : false;
     const visa = international ? toVisa(raw.visa) : null;
     const days = Math.max(1, Math.round(raw.duration_days || raw.itinerary.length || 3));
@@ -342,6 +374,8 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
       needsOrigin: !origin,
       travelerCount,
       needsTravelerCount: !travelerCount,
+      travelDates: startDateOut ? { startDate: startDateOut, endDate: endDateOut } : null,
+      needsDates: !startDateOut,
       international,
       visa,
       visaUnavailable: international && !visa,

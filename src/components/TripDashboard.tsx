@@ -20,6 +20,7 @@ import {
   Ticket,
   X,
   Users,
+  CalendarDays,
   Stamp,
   AlertTriangle,
   Clock,
@@ -101,10 +102,18 @@ function MarkToggle({
   );
 }
 
+const formatTripDate = (value: string) => {
+  const d = new Date(`${value}T00:00:00`);
+  return Number.isNaN(d.getTime())
+    ? value
+    : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+};
+
 export type DashboardProps = {
   plan: TripPlan;
   onEditPreference?: () => void;
   onEditTravelers?: () => void;
+  onEditDates?: () => void;
   marks: Record<string, boolean>;
   onToggleMark: (key: string) => void;
   selectedStay: number;
@@ -116,6 +125,7 @@ export function TripDashboard({
   plan,
   onEditPreference,
   onEditTravelers,
+  onEditDates,
   marks,
   onToggleMark,
   selectedStay,
@@ -191,6 +201,24 @@ export function TripDashboard({
               {isValidTravelerCount(plan.travelerCount)
                 ? `${plan.travelerCount} ${plan.travelerCount === 1 ? "traveller" : "travellers"}`
                 : "Set traveller count"}
+            </span>
+            <Pencil className="size-3 shrink-0 opacity-70" />
+          </button>
+        ) : null}
+        {onEditDates ? (
+          <button
+            onClick={onEditDates}
+            className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-3.5 py-1.5 text-xs text-primary transition hover:bg-primary hover:text-primary-foreground"
+          >
+            <CalendarDays className="size-3 shrink-0" />
+            <span>
+              {plan.travelDates?.startDate
+                ? `${formatTripDate(plan.travelDates.startDate)}${
+                    plan.travelDates.endDate
+                      ? ` – ${formatTripDate(plan.travelDates.endDate)}`
+                      : ""
+                  }`
+                : "Set travel dates"}
             </span>
             <Pencil className="size-3 shrink-0 opacity-70" />
           </button>
