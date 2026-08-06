@@ -352,11 +352,7 @@ export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePa
       patch.itineraryDays = raw.itinerary_days.map((d) => ({
         day: Math.round(d.day),
         title: "",
-        slots: [d.morning, d.afternoon, d.evening].map((activity, j) => ({
-          label: SLOT_LABELS[j] ?? "Morning",
-          tag: SLOT_TAGS[j] ?? "",
-          activity,
-        })),
+        slots: toSlots(d),
       }));
     }
     if (raw.budget_breakdown) {
