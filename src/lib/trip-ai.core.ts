@@ -146,7 +146,7 @@ async function callAi(system: string, prompt: string, tag: string): Promise<stri
   const { createLovableAiGatewayProvider } = await import("@/lib/ai-gateway.server");
   const gateway = createLovableAiGatewayProvider(key);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25_000);
+  const timer = setTimeout(() => controller.abort(), 90_000);
   try {
     const result = streamText({
       model: gateway("google/gemini-3.6-flash"),
