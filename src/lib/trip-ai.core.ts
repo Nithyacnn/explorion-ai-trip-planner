@@ -104,21 +104,29 @@ async function callAi(system: string, prompt: string, tag: string): Promise<stri
   if (!key) throw new Error("AI is not configured yet.");
   const { createLovableAiGatewayProvider } = await import("@/lib/ai-gateway.server");
   const gateway = createLovableAiGatewayProvider(key);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25_000);
   try {
     const result = streamText({
       model: gateway("google/gemini-3.6-flash"),
       system,
       prompt,
+      abortSignal: controller.signal,
     });
     return await result.text;
   } catch (error) {
     const message = error instanceof Error ? error.message : "AI request failed";
     console.error(`[Explorion] ${tag} AI request failed:`, message);
+    if (controller.signal.aborted)
+      throw new Error("That took too long — please try again.");
     if (message.includes("429")) throw new Error("Too many requests — try again shortly.");
     if (message.includes("402")) throw new Error("AI credits exhausted for this workspace.");
     throw new Error("Something went wrong generating your trip — try again.");
+  } finally {
+    clearTimeout(timer);
   }
 }
+
 
 function toDay(d: z.infer<typeof daySchema>, index: number, days: number, destination: string) {
   return {
