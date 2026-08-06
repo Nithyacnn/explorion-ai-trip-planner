@@ -17,11 +17,24 @@ const modeSchema = z.object({
   notes: z.string(),
 });
 
+const stopSchema = z.object({
+  activity: z.string(),
+  why: z.string().nullable().optional(),
+  travel_time_from_previous: z.string().nullable().optional(),
+  optional: z.boolean().nullable().optional(),
+});
+
+const blockSchema = z.object({
+  stops: z.array(stopSchema),
+  time_range: z.string().nullable().optional(),
+  overpacked: z.boolean().nullable().optional(),
+});
+
 const daySchema = z.object({
   day: z.number(),
-  morning: z.string(),
-  afternoon: z.string(),
-  evening: z.string(),
+  morning: blockSchema,
+  afternoon: blockSchema,
+  evening: blockSchema,
 });
 
 const stayOptionSchema = z.object({
