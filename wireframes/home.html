@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Explorion — Wireframe: Home</title>
+  <style>
+    :root{--navy:#0B132B;--brass:#D4AF37;--card:#F8F6F2;--muted:#98A0B3;--fg:#111}
+    *{box-sizing:border-box;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial}
+    body{margin:0;min-height:100vh;background:linear-gradient(160deg,#0b132b 0%,#081022 100%);color:var(--fg);padding:36px}
+    .container{max-width:980px;margin:0 auto}
+    header{display:flex;justify-content:space-between;align-items:center;margin-bottom:28px}
+    .brand{display:flex;gap:12px;align-items:center}
+    .logo{width:44px;height:44;border-radius:10px;background:var(--brass);display:flex;align-items:center;justify-content:center;color:#111;font-weight:700}
+    .title{line-height:1}
+    .title .main{font-size:18px;font-weight:700;color:#F1EFEF}
+    .title .sub{font-size:11px;color:var(--muted);letter-spacing:0.18em;text-transform:uppercase}
+    .trips-btn{background:transparent;border:1px solid rgba(255,255,255,0.08);padding:8px 12px;border-radius:999px;color:var(--muted);font-size:13px;cursor:pointer}
+    h1{font-size:40px;margin:0 0 8px 0}
+    p.lead{color:var(--muted);max-width:640px}
+    .card{background:var(--card);color:#111;padding:18px;border-radius:14px;margin-top:18px}
+    textarea{width:100%;min-height:82px;border:none;background:transparent;color:#111;font-size:15px;resize:none;outline:none}
+    .controls{display:flex;align-items:center;justify-content:space-between;margin-top:14px;gap:12px}
+    .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+    .chip{padding:8px 14px;border-radius:999px;border:1px solid rgba(0,0,0,0.06);background:#fff;font-size:13px;color:#556}
+    .primary{background:var(--brass);color:#121212;padding:11px 16px;border-radius:12px;font-weight:700;border:none;cursor:pointer}
+    /* placeholder states */
+    .panel{margin-top:18px;padding:16px;border-radius:12px;background:rgba(255,255,255,0.03);color:var(--fg)}
+    .muted{color:var(--muted);font-size:13px}
+    @media(max-width:640px){h1{font-size:28px}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <div class="logo">E</div>
+        <div class="title">
+          <div class="main">Explorion</div>
+          <div class="sub">AI Travel Planner</div>
+        </div>
+      </div>
+      <button class="trips-btn">My Trips (0) ▾</button>
+    </header>
+
+    <main>
+      <h1>Where do you want to go?</h1>
+      <p class="lead">Describe the trip in your own words. Explorion turns it into an itinerary, travel costs and a budget you can actually follow.</p>
+
+      <div class="card" aria-labelledby="trip-label">
+        <label id="trip-label" class="sr-only">Describe your trip</label>
+        <textarea id="trip" placeholder="Describe your trip (e.g., 3 days in Goa under ₹20,000 in October)"></textarea>
+        <div class="controls">
+          <div class="muted">Any budget you mention is treated as per person</div>
+          <button class="primary" id="planBtn">Plan My Trip →</button>
+        </div>
+      </div>
+
+      <div class="chips" role="list">
+        <button class="chip">3 days in Goa</button>
+        <button class="chip">5 days in Manali</button>
+        <button class="chip">Weekend in Pondicherry</button>
+      </div>
+
+      <div class="panel" id="statePanel" style="display:none">
+        <div class="muted">Panel placeholder — preference / needs / loading / error states appear here.</div>
+      </div>
+    </main>
+  </div>
+  <script>
+    // Quick interactions for the wireframe.
+    document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
+      document.getElementById('trip').value = c.textContent;
+    }));
+    document.getElementById('planBtn').addEventListener('click', () => {
+      const val = document.getElementById('trip').value.trim();
+      const panel = document.getElementById('statePanel');
+      if(!val){panel.style.display='block';panel.textContent='Please describe your trip.';return;}
+      panel.style.display='block';
+      panel.textContent='Planning… (in real app this triggers AI and navigates to dashboard)';
+    });
+  </script>
+</body>
+</html>
