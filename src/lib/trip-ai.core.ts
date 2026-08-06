@@ -17,25 +17,11 @@ const modeSchema = z.object({
   notes: z.string(),
 });
 
-const stopSchema = z.object({
-  activity: z.string(),
-  why: z.string().optional(),
-  travel_time_from_previous: z.string().optional(),
-  optional: z.boolean().optional(),
-});
-
-const blockSchema = z.object({
-  stops: z.array(stopSchema).min(1),
-  time_range: z.string().optional(),
-  overpacked: z.boolean().optional(),
-});
-
 const daySchema = z.object({
   day: z.number(),
-  title: z.string(),
-  morning: blockSchema,
-  afternoon: blockSchema,
-  evening: blockSchema,
+  morning: z.string(),
+  afternoon: z.string(),
+  evening: z.string(),
 });
 
 const stayOptionSchema = z.object({
@@ -79,8 +65,7 @@ const planSchema = z.object({
   }),
 });
 
-const BLOCK_SHAPE = `{"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean}],"time_range":string,"overpacked":boolean}`;
-const JSON_SHAPE = `{"destination":string,"origin":string|null,"needs_origin":boolean,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options":[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary":[{"day":number,"title":string,"morning":${BLOCK_SHAPE},"afternoon":${BLOCK_SHAPE},"evening":${BLOCK_SHAPE}}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}`;
+const JSON_SHAPE = `{"destination":string,"origin":string|null,"needs_origin":boolean,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options":[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary":[{"day":number,"morning":string,"afternoon":string,"evening":string}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}`;
 
 const SYSTEM = `You are Explorion, a travel planning and budgeting expert (INR, India-first but able to plan international trips).
 
@@ -98,24 +83,7 @@ Rules:
 - Each mode: low/high are realistic ROUND-TRIP per-person costs for that exact pair; "duration" is a human string like "12 hrs each way"; "notes" is one short practical line. For "own_vehicle", low/high estimate round-trip FUEL + TOLL cost for the route (not a ticket price).
 - recommended_mode must be one of the modes you returned. recommended_reason must weigh the traveller's stated style/preference and budget against cost AND duration — a genuine trade-off sentence (e.g. "flight recommended: saves 14 hours for only ₹2,000 more on a comfort-first trip"), never just "cheapest".
 - stay_options: exactly 3 realistic distinct properties that each fit within the stated budget, with name, type (hotel/homestay/resort/hostel), price_per_night, rating (0-5) and a one-line "why". Sort by rating descending.
-
-- itinerary: exactly duration_days entries. Each day needs a unique "title" that reflects what's actually distinct about THAT day (e.g. "Snow & Slopes at Sethan", "Temples and Valley Views") — no two days in the same trip may share a title, and never reuse a generic "Exploring <destination>" title for more than one day.
-
-- Each day has three blocks: morning, afternoon, evening. Each block's "stops" array holds ONE OR MORE genuinely distinct activities or places — never the setup, execution, and aftermath of a single activity split across three lines (e.g. "gear up for skiing" → "ski" → "warm up after skiing" is WRONG; each block must be a separate decision, not one narrated in three acts).
-
-- Set stop count per block using pace/style/trip_preference as the density signal, not a fixed number:
-  - "calm" / "relaxed" / "less travel" preference → exactly 1 stop per block, unhurried, minimal travel between stops.
-  - default/unspecified → 1-2 stops per block.
-  - "adventurous" / "packed" / "see everything" preference → up to 3-4 stops per block where the destination genuinely supports it and travel time allows it.
-  Never pad a block with a filler stop just to hit a count — a sparse block is correct when the destination or preference calls for it.
-
-- For every stop after the first in a block, include "travel_time_from_previous" (e.g. "12 min walk", "25 min drive"). Include a "why" clause on at least one stop per day when trip_preference signals unexplored/offbeat interest. Mark true optional add-ons with "optional": true.
-
-- Set "overpacked": true on a block only if the combined stops plus travel time realistically cannot fit in that time-of-day window — this should be rare, not decorative.
-
-- Vary activity types day-to-day across the whole trip — avoid repeating the same kind of stop (e.g. two separate village-walk days, two sunset-viewpoint evenings) unless the destination has genuinely limited options, in which case vary the specific location each time.
-
-- Weave in a specific meal recommendation (respecting any stated dietary preference) as its own stop within the relevant block, rather than folding it into another activity's description.
+- itinerary: exactly duration_days entries, each with specific named morning, afternoon and evening activities at the destination, tailored to the detected travel style.
 - budget_breakdown: stay + transit + meals + activities must sum to approximately budget_total, and the top-rated stay's price_per_night × duration_days should roughly match budget_breakdown.stay.
 - agent_labels must be exactly: transport "Research Agent", stay "Property Verification Agent", itinerary "Itinerary Builder Agent", budget_breakdown "Budget Optimisation Agent".
 - month: the travel month mentioned, else "Anytime". style: romantic, solo, luxury, budget, family, adventure or balanced. vibe: a short 3-6 word description.
@@ -149,7 +117,8 @@ async function callAi(system: string, prompt: string, tag: string): Promise<stri
   } catch (error) {
     const message = error instanceof Error ? error.message : "AI request failed";
     console.error(`[Explorion] ${tag} AI request failed:`, message);
-    if (controller.signal.aborted) throw new Error("That took too long — please try again.");
+    if (controller.signal.aborted)
+      throw new Error("That took too long — please try again.");
     if (message.includes("429")) throw new Error("Too many requests — try again shortly.");
     if (message.includes("402")) throw new Error("AI credits exhausted for this workspace.");
     throw new Error("Something went wrong generating your trip — try again.");
@@ -158,29 +127,20 @@ async function callAi(system: string, prompt: string, tag: string): Promise<stri
   }
 }
 
-function toBlock(block: z.infer<typeof blockSchema>, fallbackTag: string) {
-  return {
-    label: "",
-    tag: block.time_range || fallbackTag,
-    overpacked: !!block.overpacked,
-    stops: block.stops.map((s) => ({
-      activity: s.activity,
-      ...(s.why ? { why: s.why } : {}),
-      ...(s.travel_time_from_previous
-        ? { travelTimeFromPrevious: s.travel_time_from_previous }
-        : {}),
-      ...(s.optional ? { optional: true } : {}),
-    })),
-  };
-}
 
 function toDay(d: z.infer<typeof daySchema>, index: number, days: number, destination: string) {
   return {
     day: index + 1,
-    title: d.title?.trim() || `Day ${index + 1} in ${destination}`,
-    slots: [d.morning, d.afternoon, d.evening].map((block, j) => ({
-      ...toBlock(block, SLOT_TAGS[j] ?? ""),
+    title:
+      index === 0
+        ? "Arrival & first impressions"
+        : index === days - 1
+          ? "Slow morning & departure"
+          : `Exploring ${destination}`,
+    slots: [d.morning, d.afternoon, d.evening].map((activity, j) => ({
       label: SLOT_LABELS[j] ?? "Morning",
+      tag: SLOT_TAGS[j] ?? "",
+      activity,
     })),
   };
 }
@@ -223,56 +183,58 @@ export type GenerateInput = z.infer<typeof Input>;
 export const parseGenerateInput = (input: unknown): GenerateInput => Input.parse(input);
 
 export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan> {
-  const originLine = data.origin
-    ? `\nThe traveller is departing from: ${data.origin}. Use it as the origin and set needs_origin to false.`
-    : "";
+    const originLine = data.origin
+      ? `\nThe traveller is departing from: ${data.origin}. Use it as the origin and set needs_origin to false.`
+      : "";
 
-  const preference = data.preference?.trim() ?? "";
-  const preferenceLine = preference
-    ? `\nTrip preference (free text, shape the whole plan around it): ${preference}`
-    : `\nThe traveller skipped the preference question — use a balanced default plan and return "trip_preference": "".`;
+    const preference = data.preference?.trim() ?? "";
+    const preferenceLine = preference
+      ? `\nTrip preference (free text, shape the whole plan around it): ${preference}`
+      : `\nThe traveller skipped the preference question — use a balanced default plan and return "trip_preference": "".`;
 
-  const text = await callAi(
-    SYSTEM,
-    `${data.prompt}${originLine}${preferenceLine}\n\nReturn ONLY the raw JSON object described in the system message.`,
-    "plan",
-  );
+    const text = await callAi(
+      SYSTEM,
+      `${data.prompt}${originLine}${preferenceLine}\n\nReturn ONLY the raw JSON object described in the system message.`,
+      "plan",
+    );
 
-  const parsed = planSchema.safeParse(extractJson(text));
-  if (!parsed.success) {
-    console.error("[Explorion] could not parse AI plan:", parsed.error.message, text);
-    throw new Error("Something went wrong generating your trip — try again.");
-  }
-  const raw = parsed.data;
+    const parsed = planSchema.safeParse(extractJson(text));
+    if (!parsed.success) {
+      console.error("[Explorion] could not parse AI plan:", parsed.error.message, text);
+      throw new Error("Something went wrong generating your trip — try again.");
+    }
+    const raw = parsed.data;
 
-  const origin = data.origin?.trim() || raw.origin?.trim() || null;
-  const days = Math.max(1, Math.round(raw.duration_days || raw.itinerary.length || 3));
-  const itinerary = raw.itinerary.slice(0, days).map((d, i) => toDay(d, i, days, raw.destination));
+    const origin = data.origin?.trim() || raw.origin?.trim() || null;
+    const days = Math.max(1, Math.round(raw.duration_days || raw.itinerary.length || 3));
+    const itinerary = raw.itinerary
+      .slice(0, days)
+      .map((d, i) => toDay(d, i, days, raw.destination));
 
-  return {
-    destination: raw.destination,
-    origin,
-    needsOrigin: !origin,
-    days,
-    budget: Math.round(raw.budget_total || 0),
-    month: raw.month || "Anytime",
-    transport: {
-      modes: toModes(raw.transport.available_modes),
-      recommendedMode: raw.transport.recommended_mode,
-      recommendedReason: raw.transport.recommended_reason,
-    },
-    itinerary,
-    budgetBreakdown: toBreakdown(raw.budget_breakdown, raw.budget_total),
-    stayOptions: toStays(raw.stay_options),
-    agentLabels: {
-      transport: raw.agent_labels.transport,
-      stay: raw.agent_labels.stay,
-      itinerary: raw.agent_labels.itinerary,
-      budget: raw.agent_labels.budget_breakdown,
-    },
-    tripPreference: preference || raw.trip_preference?.trim() || "",
-    style: raw.style,
-    vibe: raw.vibe,
+    return {
+      destination: raw.destination,
+      origin,
+      needsOrigin: !origin,
+      days,
+      budget: Math.round(raw.budget_total || 0),
+      month: raw.month || "Anytime",
+      transport: {
+        modes: toModes(raw.transport.available_modes),
+        recommendedMode: raw.transport.recommended_mode,
+        recommendedReason: raw.transport.recommended_reason,
+      },
+      itinerary,
+      budgetBreakdown: toBreakdown(raw.budget_breakdown, raw.budget_total),
+      stayOptions: toStays(raw.stay_options),
+      agentLabels: {
+        transport: raw.agent_labels.transport,
+        stay: raw.agent_labels.stay,
+        itinerary: raw.agent_labels.itinerary,
+        budget: raw.agent_labels.budget_breakdown,
+      },
+      tripPreference: preference || raw.trip_preference?.trim() || "",
+      style: raw.style,
+      vibe: raw.vibe,
     debugRaw: text,
   };
 }
@@ -308,12 +270,11 @@ You receive an existing trip plan JSON and a refinement request. You must change
 OUTPUT FORMAT: one raw JSON object, no markdown, no code fences, no prose. First character "{", last "}". INR integers.
 
 Shape:
-{"changed":["transport"|"stay"|"budget"|"day:<n>"...],"summary":string,"transport"?:{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options"?:[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary_days"?:[{"day":number,"title":string,"morning":${BLOCK_SHAPE},"afternoon":${BLOCK_SHAPE},"evening":${BLOCK_SHAPE}}],"budget_breakdown"?:{"stay":number,"transit":number,"meals":number,"activities":number}}
+{"changed":["transport"|"stay"|"budget"|"day:<n>"...],"summary":string,"transport"?:{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options"?:[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary_days"?:[{"day":number,"morning":string,"afternoon":string,"evening":string}],"budget_breakdown"?:{"stay":number,"transit":number,"meals":number,"activities":number}}
 
 Rules:
 - "changed" lists exactly the sections you actually rewrote; "summary" is a short human sentence like "Updated: Day 2 itinerary, stay options".
-- itinerary_days contains ONLY the days you changed, each keeping its original "day" number and a title distinct from every other day in the trip (never reuse another day's title, including days you did not touch).
-- Each block's "stops" array holds one or more genuinely distinct activities (never one activity narrated across all three blocks). Follow the same density-by-pace and travel_time_from_previous rules as initial generation.
+- itinerary_days contains ONLY the days you changed, each keeping its original "day" number.
 - Only include modes that genuinely exist for the route; air-only routes return only flight. own_vehicle costs are fuel + tolls.
 - stay_options is always 3 options within budget, sorted by rating descending.
 - Keep everything consistent with the untouched parts of the plan (same destination, duration, budget).
@@ -332,47 +293,48 @@ export type RefineInputType = z.infer<typeof RefineInput>;
 export const parseRefineInput = (input: unknown): RefineInputType => RefineInput.parse(input);
 
 export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePatch> {
-  const scopeLine = data.scope.length
-    ? `Sections explicitly marked for change: ${data.scope.join(", ")}. Change ONLY these.`
-    : `No sections were explicitly marked — infer the narrowest scope from the request text and change nothing else.`;
+    const scopeLine = data.scope.length
+      ? `Sections explicitly marked for change: ${data.scope.join(", ")}. Change ONLY these.`
+      : `No sections were explicitly marked — infer the narrowest scope from the request text and change nothing else.`;
 
-  const text = await callAi(
-    REFINE_SYSTEM,
-    `Existing plan JSON:\n${JSON.stringify(data.plan)}\n\nRefinement request: ${data.request}\n${scopeLine}\n\nReturn ONLY the raw partial JSON patch.`,
-    "refine",
-  );
+    const text = await callAi(
+      REFINE_SYSTEM,
+      `Existing plan JSON:\n${JSON.stringify(data.plan)}\n\nRefinement request: ${data.request}\n${scopeLine}\n\nReturn ONLY the raw partial JSON patch.`,
+      "refine",
+    );
 
-  const parsed = refineSchema.safeParse(extractJson(text));
-  if (!parsed.success) {
-    console.error("[Explorion] could not parse refinement:", parsed.error.message, text);
-    throw new Error("Couldn't apply that change — try rephrasing.");
-  }
-  const raw = parsed.data;
+    const parsed = refineSchema.safeParse(extractJson(text));
+    if (!parsed.success) {
+      console.error("[Explorion] could not parse refinement:", parsed.error.message, text);
+      throw new Error("Couldn't apply that change — try rephrasing.");
+    }
+    const raw = parsed.data;
 
-  const patch: RefinePatch = {
-    changed: raw.changed,
-    summary: raw.summary,
-  };
-  if (raw.transport) {
-    patch.transport = {
-      modes: toModes(raw.transport.available_modes),
-      recommendedMode: raw.transport.recommended_mode,
-      recommendedReason: raw.transport.recommended_reason,
+    const patch: RefinePatch = {
+      changed: raw.changed,
+      summary: raw.summary,
     };
-  }
-  if (raw.stay_options) patch.stayOptions = toStays(raw.stay_options);
-  if (raw.itinerary_days) {
-    patch.itineraryDays = raw.itinerary_days.map((d) => ({
-      day: Math.round(d.day),
-      title: d.title?.trim() || "",
-      slots: [d.morning, d.afternoon, d.evening].map((block, j) => ({
-        ...toBlock(block, SLOT_TAGS[j] ?? ""),
-        label: SLOT_LABELS[j] ?? "Morning",
-      })),
-    }));
-  }
-  if (raw.budget_breakdown) {
-    patch.budgetBreakdown = toBreakdown(raw.budget_breakdown, 0);
-  }
+    if (raw.transport) {
+      patch.transport = {
+        modes: toModes(raw.transport.available_modes),
+        recommendedMode: raw.transport.recommended_mode,
+        recommendedReason: raw.transport.recommended_reason,
+      };
+    }
+    if (raw.stay_options) patch.stayOptions = toStays(raw.stay_options);
+    if (raw.itinerary_days) {
+      patch.itineraryDays = raw.itinerary_days.map((d) => ({
+        day: Math.round(d.day),
+        title: "",
+        slots: [d.morning, d.afternoon, d.evening].map((activity, j) => ({
+          label: SLOT_LABELS[j] ?? "Morning",
+          tag: SLOT_TAGS[j] ?? "",
+          activity,
+        })),
+      }));
+    }
+    if (raw.budget_breakdown) {
+      patch.budgetBreakdown = toBreakdown(raw.budget_breakdown, 0);
+    }
   return patch;
 }

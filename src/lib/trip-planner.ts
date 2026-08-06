@@ -1,10 +1,4 @@
-export type Stop = {
-  activity: string;
-  why?: string;
-  travelTimeFromPrevious?: string;
-  optional?: boolean;
-};
-export type Slot = { label: string; tag: string; stops: Stop[]; overpacked?: boolean };
+export type Slot = { label: string; tag: string; activity: string };
 export type DayPlan = { day: number; title: string; slots: Slot[] };
 
 export type TransportModeId = "flight" | "train" | "bus" | "own_vehicle";
@@ -63,6 +57,7 @@ export const MODE_LABELS: Record<TransportModeId, string> = {
   bus: "Bus (AC sleeper)",
   own_vehicle: "Own vehicle (fuel + tolls)",
 };
+
 
 type Dest = {
   name: string;
@@ -225,7 +220,9 @@ const SLOT_META = [
 function parseDays(text: string): number {
   const digit = text.match(/(\d+)\s*(?:days?|nights?|d\b)/i);
   if (digit?.[1]) return clamp(parseInt(digit[1], 10), 1, 7);
-  const word = text.match(/\b(one|two|three|four|five|six|seven)\s*(?:days?|nights?)/i);
+  const word = text.match(
+    /\b(one|two|three|four|five|six|seven)\s*(?:days?|nights?)/i,
+  );
   if (word?.[1]) return NUM_WORDS[word[1].toLowerCase()] ?? 3;
   if (/weekend/i.test(text)) return 2;
   return 3;
@@ -256,7 +253,9 @@ function scale(n: number, unit?: string): number {
 }
 
 function parseMonth(text: string): string {
-  const name = MONTHS.find((m) => new RegExp(`\\b${m.slice(0, 3)}[a-z]*\\b`, "i").test(text));
+  const name = MONTHS.find((m) =>
+    new RegExp(`\\b${m.slice(0, 3)}[a-z]*\\b`, "i").test(text),
+  );
   return name ? name.charAt(0).toUpperCase() + name.slice(1) : "Flexible dates";
 }
 
@@ -267,7 +266,8 @@ function clamp(n: number, min: number, max: number) {
 export function planTrip(prompt: string): TripPlan {
   const text = prompt.trim() || "3 days in Goa under ₹20,000";
   const lower = text.toLowerCase();
-  const dest = DESTINATIONS.find((d) => d.keywords.some((k) => lower.includes(k))) ?? FALLBACK;
+  const dest =
+    DESTINATIONS.find((d) => d.keywords.some((k) => lower.includes(k))) ?? FALLBACK;
 
   const days = parseDays(lower);
   const budget = parseBudget(lower, days);
@@ -288,7 +288,7 @@ export function planTrip(prompt: string): TripPlan {
       slots: SLOT_META.map((meta, j) => ({
         label: meta.label,
         tag: meta.tag,
-        stops: [{ activity: spots[j] ?? "Free time to explore" }],
+        activity: spots[j] ?? "Free time to explore",
       })),
     };
   });
@@ -311,6 +311,7 @@ export function planTrip(prompt: string): TripPlan {
     origin: null,
     needsOrigin: false,
     days,
+
 
     budget,
     month,
