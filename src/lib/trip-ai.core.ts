@@ -32,6 +32,7 @@ const blockSchema = z.object({
 
 const daySchema = z.object({
   day: z.number(),
+  early_morning: blockSchema.nullable().optional(),
   morning: blockSchema,
   afternoon: blockSchema,
   evening: blockSchema,
@@ -80,7 +81,7 @@ const planSchema = z.object({
 
 const BLOCK_SHAPE = `{"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean}],"time_range":string,"overpacked":boolean}`;
 
-const JSON_SHAPE = `{"destination":string,"origin":string|null,"needs_origin":boolean,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options":[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary":[{"day":number,"morning":${BLOCK_SHAPE},"afternoon":${BLOCK_SHAPE},"evening":${BLOCK_SHAPE}}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}`;
+const JSON_SHAPE = `{"destination":string,"origin":string|null,"needs_origin":boolean,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options":[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary":[{"day":number,"early_morning":${BLOCK_SHAPE},"morning":${BLOCK_SHAPE},"afternoon":${BLOCK_SHAPE},"evening":${BLOCK_SHAPE}}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}`;
 
 const SYSTEM = `You are Explorion, a travel planning and budgeting expert (INR, India-first but able to plan international trips).
 
@@ -98,14 +99,26 @@ Rules:
 - Each mode: low/high are realistic ROUND-TRIP per-person costs for that exact pair; "duration" is a human string like "12 hrs each way"; "notes" is one short practical line. For "own_vehicle", low/high estimate round-trip FUEL + TOLL cost for the route (not a ticket price).
 - recommended_mode must be one of the modes you returned. recommended_reason must weigh the traveller's stated style/preference and budget against cost AND duration — a genuine trade-off sentence (e.g. "flight recommended: saves 14 hours for only ₹2,000 more on a comfort-first trip"), never just "cheapest".
 - stay_options: exactly 3 realistic distinct properties that each fit within the stated budget, with name, type (hotel/homestay/resort/hostel), price_per_night, rating (0-5) and a one-line "why". Sort by rating descending.
-- itinerary: exactly duration_days entries. Each day has three blocks (morning, afternoon, evening); each block is an object with "stops", "time_range" (e.g. "08:00 – 12:00") and "overpacked".
+- itinerary: exactly duration_days entries. Each day has FOUR blocks: early_morning (06:00 – 09:00), morning (09:00 – 13:00), afternoon (13:00 – 17:00), evening (17:00 – 22:00). Each block is an object with "stops", "time_range" and "overpacked".
 
-Activity density (important — there is NO fixed cap of 2 stops):
-- Set target density from the traveller's pace / trip_preference: calm, relaxed or "less travel" → exactly 1 stop per block (fewer, longer, unhurried visits); unspecified → 1-2 stops; adventurous, packed or "see everything" → up to 3-4 stops per block, but ONLY where the destination genuinely supports it and real travel times allow.
+Full-day coverage (mandatory, all paces):
+- EVERY day of EVERY trip must span roughly 06:00 to 22:00 with no empty block and no unplanned gap larger than ~3 hours inside that span. Pace changes ONLY the number of stops per block and how rushed it feels — never the total span. A calm day = fewer stops spread comfortably across the whole day; a packed day = more stops across the same whole day.
+- A block with zero stops is invalid output. If nothing destination-appropriate exists for a block, fill it with a light default such as "Leisurely breakfast and coffee at the stay" or "Rest and unwind at the stay" — never leave it blank.
+- Final day: only shorten the span if the prompt states or clearly implies a departure time ("evening train back", "flying out at 6pm"). Otherwise plan the full day including dinner.
+
+Meals (mandatory, all paces):
+- Every day must include a specific breakfast (early_morning or morning), lunch (afternoon or late morning) and dinner (evening) stop. Meals are never skipped, never omitted for calm days, and never generic.
+- Each meal stop names an actual place plus cuisine style, e.g. "Breakfast at Vinayaka Mylari — Mysore-style masala dosa". The "why" field names the actual dish or regional speciality.
+- Default to local delicacies and regional specialities tied to the destination, never generic "cafe"/"restaurant".
+- A stated dietary or cuisine preference (vegetarian, no seafood, gluten-free, Jain, etc.) fully overrides the local-delicacy default; a partial constraint still prefers local specialities matching it over international options.
+- Where the block has room, add one alternate pick for the meal as an extra stop marked "optional": true (e.g. "Alternate: ...").
+
+Activity density (there is NO fixed cap of 2 stops):
+- Set stops-per-block from the traveller's pace / trip_preference: calm, relaxed or "less travel" → 1 stop per block plus its meal; unspecified → 1-2; adventurous or "see everything" → up to 3-4 where the destination and real travel times genuinely allow. Meals always stay.
 - Every stop after the first in a block MUST have "travel_time_from_previous" as a human string ("12 min walk", "25 min drive"). The first stop of a block uses an empty string.
-- Never add a stop just to fill space. Remote or rural destinations with long distances between sights stay sparse — 1 stop is a valid, good block.
-- "why" is one short clause explaining the pick; "optional" is true only for a genuinely skippable extra.
-- If the stops plus their travel times realistically exceed the block's time_range, set "overpacked": true on that block (otherwise false) instead of pretending it fits.
+- "why" is one short clause explaining the pick; "optional" is true only for a genuinely skippable extra or an alternate meal pick.
+- If the stops plus their travel times realistically exceed the block's time_range, set "overpacked": true on that block (otherwise false).
+- If trip_preference names a theme (cafe hunting, street food, nightlife, shopping, adventure), bias stops in MULTIPLE blocks across the day toward that theme, while still covering 06:00–22:00.
 - budget_breakdown: stay + transit + meals + activities must sum to approximately budget_total, and the top-rated stay's price_per_night × duration_days should roughly match budget_breakdown.stay.
 - agent_labels must be exactly: transport "Research Agent", stay "Property Verification Agent", itinerary "Itinerary Builder Agent", budget_breakdown "Budget Optimisation Agent".
 - month: the travel month mentioned, else "Anytime". style: romantic, solo, luxury, budget, family, adventure or balanced. vibe: a short 3-6 word description.
@@ -118,8 +131,14 @@ Trip preference shaping (apply ALL signals present, combined):
 - Food or stay preferences: meals and every stay option MUST match; never conflict with a stated preference.
 - If trip_preference is empty, produce a balanced default plan.`;
 
-const SLOT_TAGS = ["08:00 – 12:00", "12:00 – 17:00", "17:00 – late"];
-const SLOT_LABELS = ["Morning", "Afternoon", "Evening"];
+const SLOT_TAGS = ["06:00 – 09:00", "09:00 – 13:00", "13:00 – 17:00", "17:00 – 22:00"];
+const SLOT_LABELS = ["Early morning", "Morning", "Afternoon", "Evening"];
+const SLOT_FILLERS = [
+  "Leisurely breakfast and morning coffee at the stay",
+  "Easy local stroll around the neighbourhood",
+  "Free time / rest at the stay",
+  "Relaxed dinner near the stay",
+];
 
 async function callAi(system: string, prompt: string, tag: string): Promise<string> {
   const key = process.env["LOVABLE_API_KEY"];
@@ -127,7 +146,7 @@ async function callAi(system: string, prompt: string, tag: string): Promise<stri
   const { createLovableAiGatewayProvider } = await import("@/lib/ai-gateway.server");
   const gateway = createLovableAiGatewayProvider(key);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25_000);
+  const timer = setTimeout(() => controller.abort(), 90_000);
   try {
     const result = streamText({
       model: gateway("google/gemini-3.6-flash"),
@@ -151,7 +170,7 @@ async function callAi(system: string, prompt: string, tag: string): Promise<stri
 
 
 function toSlots(d: z.infer<typeof daySchema>) {
-  return [d.morning, d.afternoon, d.evening].map((block, j) => ({
+  return [d.early_morning, d.morning, d.afternoon, d.evening].map((block, j) => ({
     label: SLOT_LABELS[j] ?? "Morning",
     tag: block?.time_range?.trim() || SLOT_TAGS[j] || "",
     overpacked: block?.overpacked === true,
@@ -164,7 +183,21 @@ function toSlots(d: z.infer<typeof daySchema>) {
           i > 0 ? s.travel_time_from_previous?.trim() || undefined : undefined,
         optional: s.optional === true,
       })),
-  }));
+  })).map((slot, j) =>
+    slot.stops.length
+      ? slot
+      : {
+          ...slot,
+          stops: [
+            {
+              activity: SLOT_FILLERS[j] ?? "Free time at the stay",
+              why: "Keeps the day covered without rushing",
+              travelTimeFromPrevious: undefined,
+              optional: false,
+            },
+          ],
+        },
+  );
 }
 
 function toDay(d: z.infer<typeof daySchema>, index: number, days: number, destination: string) {
@@ -305,11 +338,13 @@ You receive an existing trip plan JSON and a refinement request. You must change
 OUTPUT FORMAT: one raw JSON object, no markdown, no code fences, no prose. First character "{", last "}". INR integers.
 
 Shape:
-{"changed":["transport"|"stay"|"budget"|"day:<n>"...],"summary":string,"transport"?:{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options"?:[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary_days"?:[{"day":number,"morning":BLOCK,"afternoon":BLOCK,"evening":BLOCK}] where BLOCK = {"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean}],"time_range":string,"overpacked":boolean},"budget_breakdown"?:{"stay":number,"transit":number,"meals":number,"activities":number}}
+{"changed":["transport"|"stay"|"budget"|"day:<n>"...],"summary":string,"transport"?:{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options"?:[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary_days"?:[{"day":number,"early_morning":BLOCK,"morning":BLOCK,"afternoon":BLOCK,"evening":BLOCK}] where BLOCK = {"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean}],"time_range":string,"overpacked":boolean},"budget_breakdown"?:{"stay":number,"transit":number,"meals":number,"activities":number}}
 
 Rules:
 - "changed" lists exactly the sections you actually rewrote; "summary" is a short human sentence like "Updated: Day 2 itinerary, stay options".
 - itinerary_days contains ONLY the days you changed, each keeping its original "day" number.
+- Each day has FOUR blocks: early_morning (06:00 – 09:00), morning (09:00 – 13:00), afternoon (13:00 – 17:00), evening (17:00 – 22:00). Every day must cover 06:00–22:00 with no empty block and no gap over ~3 hours, at every pace — pace only changes stop count; an empty block is invalid, fill it with a light default.
+- Every day keeps a specific breakfast, lunch and dinner naming a real place plus the local dish/cuisine in "why"; dietary or cuisine preferences override the local-delicacy default. Meals are never dropped for calm days. If trip_preference names a theme, bias multiple blocks toward it.
 - Block density follows the traveller's pace: calm → 1 stop per block, default → 1-2, adventurous/packed → up to 3-4 where realistic. Every stop after the first needs "travel_time_from_previous"; never pad a block with filler; set "overpacked": true when the stops plus travel realistically exceed time_range.
 - Only include modes that genuinely exist for the route; air-only routes return only flight. own_vehicle costs are fuel + tolls.
 - stay_options is always 3 options within budget, sorted by rating descending.
