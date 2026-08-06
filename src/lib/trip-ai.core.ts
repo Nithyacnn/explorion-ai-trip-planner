@@ -349,6 +349,18 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
         ? Math.round(raw.traveler_count)
         : null;
     const travelerCount = suppliedCount ?? rawCount;
+    const isDate = (v: unknown): v is string =>
+      typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.trim());
+    const startDateOut = isDate(data.startDate)
+      ? data.startDate.trim()
+      : isDate(raw.travel_dates?.start_date)
+        ? raw.travel_dates!.start_date!.trim()
+        : null;
+    const endDateOut = isDate(data.endDate)
+      ? data.endDate.trim()
+      : isDate(raw.travel_dates?.end_date)
+        ? raw.travel_dates!.end_date!.trim()
+        : null;
     const international = origin ? raw.international === true : false;
     const visa = international ? toVisa(raw.visa) : null;
     const days = Math.max(1, Math.round(raw.duration_days || raw.itinerary.length || 3));
@@ -362,6 +374,8 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
       needsOrigin: !origin,
       travelerCount,
       needsTravelerCount: !travelerCount,
+      travelDates: startDateOut ? { startDate: startDateOut, endDate: endDateOut } : null,
+      needsDates: !startDateOut,
       international,
       visa,
       visaUnavailable: international && !visa,
