@@ -319,9 +319,16 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
       ? `\nTrip preference (free text, shape the whole plan around it): ${preference}`
       : `\nThe traveller skipped the preference question — use a balanced default plan and return "trip_preference": "".`;
 
+    const today = new Date().toISOString().slice(0, 10);
+    const startDate = data.startDate?.trim() || "";
+    const endDate = data.endDate?.trim() || "";
+    const datesLine = startDate
+      ? `\nConfirmed travel dates: start ${startDate}${endDate ? `, end ${endDate}` : " (derive the end date from duration_days)"}. Use them as travel_dates and set needs_dates to false.`
+      : "";
+
     const text = await callAi(
       SYSTEM,
-      `${data.prompt}${originLine}${travelerLine}${preferenceLine}\nAny budget figure in the prompt is PER PERSON.\n\nReturn ONLY the raw JSON object described in the system message.`,
+      `${data.prompt}${originLine}${travelerLine}${datesLine}${preferenceLine}\nTODAY'S DATE is ${today} — resolve every relative date against it.\nAny budget figure in the prompt is PER PERSON.\n\nReturn ONLY the raw JSON object described in the system message.`,
       "plan",
     );
 
