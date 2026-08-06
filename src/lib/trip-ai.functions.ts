@@ -2,13 +2,42 @@ import { createServerFn } from "@tanstack/react-start";
 import { streamText } from "ai";
 import { z } from "zod";
 import { extractJson } from "@/lib/json-extract";
-import type { TripPlan } from "@/lib/trip-planner";
-
+import { MODE_LABELS, type TripPlan, type TransportModeId } from "@/lib/trip-planner";
 
 const Input = z.object({
   prompt: z.string(),
   origin: z.string().nullable().optional(),
   preference: z.string().nullable().optional(),
+});
+
+const modeSchema = z.object({
+  mode: z.enum(["flight", "train", "bus", "own_vehicle"]),
+  low: z.number(),
+  high: z.number(),
+  duration: z.string(),
+  notes: z.string(),
+});
+
+const daySchema = z.object({
+  day: z.number(),
+  morning: z.string(),
+  afternoon: z.string(),
+  evening: z.string(),
+});
+
+const stayOptionSchema = z.object({
+  name: z.string(),
+  type: z.string(),
+  price_per_night: z.number(),
+  rating: z.number(),
+  why: z.string(),
+});
+
+const breakdownSchema = z.object({
+  stay: z.number(),
+  transit: z.number(),
+  meals: z.number(),
+  activities: z.number(),
 });
 
 const planSchema = z.object({
@@ -22,29 +51,13 @@ const planSchema = z.object({
   style: z.string(),
   vibe: z.string(),
   transport: z.object({
-    train: z.object({ low: z.number(), high: z.number() }),
-    flight: z.object({ low: z.number(), high: z.number() }),
+    available_modes: z.array(modeSchema).min(1),
+    recommended_mode: z.string(),
+    recommended_reason: z.string(),
   }),
-  stay: z.object({
-    name: z.string(),
-    type: z.string(),
-    price_per_night: z.number(),
-    why: z.string(),
-  }),
-  itinerary: z.array(
-    z.object({
-      day: z.number(),
-      morning: z.string(),
-      afternoon: z.string(),
-      evening: z.string(),
-    }),
-  ),
-  budget_breakdown: z.object({
-    stay: z.number(),
-    transit: z.number(),
-    meals: z.number(),
-    activities: z.number(),
-  }),
+  stay_options: z.array(stayOptionSchema).min(1),
+  itinerary: z.array(daySchema).min(1),
+  budget_breakdown: breakdownSchema,
   agent_labels: z.object({
     transport: z.string(),
     stay: z.string(),
@@ -53,74 +66,129 @@ const planSchema = z.object({
   }),
 });
 
-const SYSTEM = `You are Explorion, an Indian travel planning and budgeting expert.
+const JSON_SHAPE = `{"destination":string,"origin":string|null,"needs_origin":boolean,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options":[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary":[{"day":number,"morning":string,"afternoon":string,"evening":string}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}`;
+
+const SYSTEM = `You are Explorion, a travel planning and budgeting expert (INR, India-first but able to plan international trips).
 
 OUTPUT FORMAT (critical): respond with ONE raw JSON object and nothing else.
-No markdown, no \`\`\`json code fences, no commentary, no explanation before or after.
-The very first character of your reply must be "{" and the very last must be "}".
-Numbers are plain integers in INR (no commas, no currency symbols, not strings).
+No markdown, no \`\`\`json code fences, no commentary before or after.
+The first character must be "{" and the last "}". Numbers are plain integers in INR (no commas, no symbols, not strings) — except stay rating, which is a number 0-5 with at most one decimal.
 
 JSON shape:
-{"destination":string,"origin":string|null,"needs_origin":boolean,"trip_preference":string,"duration_days":number,"budget_total":number,"month":string,"style":string,"vibe":string,"transport":{"train":{"low":number,"high":number},"flight":{"low":number,"high":number}},"stay":{"name":string,"type":string,"price_per_night":number,"why":string},"itinerary":[{"day":number,"morning":string,"afternoon":string,"evening":string}],"budget_breakdown":{"stay":number,"transit":number,"meals":number,"activities":number},"agent_labels":{"transport":string,"stay":string,"itinerary":string,"budget_breakdown":string}}
-
+${JSON_SHAPE}
 
 Rules:
 - Parse destination, duration_days (default 3) and budget_total from the free-text prompt. If no budget is stated, estimate a realistic one.
-- origin: if the prompt mentions a starting city ("from Chennai", "leaving from Pune") use it. If no origin is stated and none is supplied, set "origin": null and "needs_origin": true. Never guess an origin.
-- transport train/flight low-high are realistic ROUND-TRIP per-person fares for the specific origin→destination pair. If origin is null, give a neutral national-average placeholder but still set needs_origin true.
-- train label is like "Train (SL/3A)", flight like "Flight (economy)" — encoded in the style of the plan.
-- stay: one specific realistic property with name, type (hotel/homestay/resort/hostel), price_per_night and a one-line "why".
-- itinerary: exactly duration_days entries, each with a specific named morning, afternoon and evening activity at the destination, tailored to the detected travel style.
-- budget_breakdown: stay + transit + meals + activities must sum to approximately budget_total, and stay.price_per_night × duration_days must roughly match budget_breakdown.stay.
+- origin: if the prompt mentions a starting city ("from Chennai") use it. If no origin is stated and none is supplied, set "origin": null and "needs_origin": true. Never guess an origin.
+- transport.available_modes: ONLY include modes that genuinely exist for this origin→destination pair. Include "train"/"bus"/"own_vehicle" only when a real rail/road route exists (same country or connected region) AND the road/rail journey is under roughly 15-18 hours. For overseas or otherwise air-only routes, return ONLY the flight mode. Never fabricate a bus or train for a route that has none.
+- Each mode: low/high are realistic ROUND-TRIP per-person costs for that exact pair; "duration" is a human string like "12 hrs each way"; "notes" is one short practical line. For "own_vehicle", low/high estimate round-trip FUEL + TOLL cost for the route (not a ticket price).
+- recommended_mode must be one of the modes you returned. recommended_reason must weigh the traveller's stated style/preference and budget against cost AND duration — a genuine trade-off sentence (e.g. "flight recommended: saves 14 hours for only ₹2,000 more on a comfort-first trip"), never just "cheapest".
+- stay_options: exactly 3 realistic distinct properties that each fit within the stated budget, with name, type (hotel/homestay/resort/hostel), price_per_night, rating (0-5) and a one-line "why". Sort by rating descending.
+- itinerary: exactly duration_days entries, each with specific named morning, afternoon and evening activities at the destination, tailored to the detected travel style.
+- budget_breakdown: stay + transit + meals + activities must sum to approximately budget_total, and the top-rated stay's price_per_night × duration_days should roughly match budget_breakdown.stay.
 - agent_labels must be exactly: transport "Research Agent", stay "Property Verification Agent", itinerary "Itinerary Builder Agent", budget_breakdown "Budget Optimisation Agent".
-- month: the travel month mentioned, else "Anytime".
-- style: romantic, solo, luxury, budget, family, adventure or balanced. vibe: a short 3-6 word description of the destination.
-- trip_preference: echo back the traveller's free-text preference exactly as supplied (empty string if none was given).
+- month: the travel month mentioned, else "Anytime". style: romantic, solo, luxury, budget, family, adventure or balanced. vibe: a short 3-6 word description.
+- trip_preference: echo the traveller's free-text preference exactly (empty string if none).
 
 Trip preference shaping (apply ALL signals present, combined):
-- Unexplored / hidden / "not touristy": bias activities toward lesser-known spots instead of headline attractions, and in at least one activity string append a short " — why: ..." clause explaining why it fits that preference.
-- Calm / relaxed / slow / less travel: fewer, lighter activities per day (repeat "Free time / rest" for a slot when appropriate), no multi-location day trips, and keep the stay and activities clustered in one area.
-- Adventurous / adrenaline / active: prioritise outdoor and activity-based items over sightseeing-only ones.
-- Food or stay preferences (vegetarian, gluten-free, boutique, beachfront, etc.): meal suggestions and the stay recommendation MUST match; never suggest anything conflicting with a stated preference.
+- Unexplored / hidden / "not touristy": bias toward lesser-known spots and append a short " — why: ..." clause in at least one activity.
+- Calm / relaxed / slow: fewer, lighter activities ("Free time / rest" where appropriate), no multi-location day trips, cluster everything in one area.
+- Adventurous / active: prioritise outdoor and activity-based items.
+- Food or stay preferences: meals and every stay option MUST match; never conflict with a stated preference.
 - If trip_preference is empty, produce a balanced default plan.`;
 
 const SLOT_TAGS = ["08:00 – 12:00", "12:00 – 17:00", "17:00 – late"];
+const SLOT_LABELS = ["Morning", "Afternoon", "Evening"];
+
+async function callAi(system: string, prompt: string, tag: string): Promise<string> {
+  const key = process.env["LOVABLE_API_KEY"];
+  if (!key) throw new Error("AI is not configured yet.");
+  const { createLovableAiGatewayProvider } = await import("@/lib/ai-gateway.server");
+  const gateway = createLovableAiGatewayProvider(key);
+  try {
+    const result = streamText({
+      model: gateway("google/gemini-3.6-flash"),
+      system,
+      prompt,
+    });
+    return await result.text;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "AI request failed";
+    console.error(`[Explorion] ${tag} AI request failed:`, message);
+    if (message.includes("429")) throw new Error("Too many requests — try again shortly.");
+    if (message.includes("402")) throw new Error("AI credits exhausted for this workspace.");
+    throw new Error("Something went wrong generating your trip — try again.");
+  }
+}
+
+function toDay(d: z.infer<typeof daySchema>, index: number, days: number, destination: string) {
+  return {
+    day: index + 1,
+    title:
+      index === 0
+        ? "Arrival & first impressions"
+        : index === days - 1
+          ? "Slow morning & departure"
+          : `Exploring ${destination}`,
+    slots: [d.morning, d.afternoon, d.evening].map((activity, j) => ({
+      label: SLOT_LABELS[j] ?? "Morning",
+      tag: SLOT_TAGS[j] ?? "",
+      activity,
+    })),
+  };
+}
+
+function toBreakdown(bb: z.infer<typeof breakdownSchema>, fallbackTotal: number) {
+  const items = [
+    { label: "Stay", amount: Math.max(0, Math.round(bb.stay)) },
+    { label: "Transit", amount: Math.max(0, Math.round(bb.transit)) },
+    { label: "Meals", amount: Math.max(0, Math.round(bb.meals)) },
+    { label: "Activities", amount: Math.max(0, Math.round(bb.activities)) },
+  ];
+  const total = items.reduce((s, b) => s + b.amount, 0) || fallbackTotal || 1;
+  return items.map((b) => ({ ...b, pct: Math.round((b.amount / total) * 100) }));
+}
+
+function toModes(modes: z.infer<typeof modeSchema>[]) {
+  return modes.map((m) => ({
+    mode: m.mode as TransportModeId,
+    label: MODE_LABELS[m.mode as TransportModeId] ?? m.mode,
+    min: Math.round(m.low),
+    max: Math.round(m.high),
+    duration: m.duration,
+    notes: m.notes,
+  }));
+}
+
+function toStays(options: z.infer<typeof stayOptionSchema>[]) {
+  return options
+    .map((s) => ({
+      name: s.name,
+      type: s.type,
+      pricePerNight: Math.round(s.price_per_night),
+      rating: Math.round(Math.min(5, Math.max(0, s.rating)) * 10) / 10,
+      why: s.why,
+    }))
+    .sort((a, b) => b.rating - a.rating);
+}
 
 export const generateTripPlan = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => Input.parse(input))
   .handler(async ({ data }): Promise<TripPlan> => {
-    const key = process.env["LOVABLE_API_KEY"];
-    if (!key) throw new Error("AI is not configured yet.");
-
-    const { createLovableAiGatewayProvider } = await import("@/lib/ai-gateway.server");
-    const gateway = createLovableAiGatewayProvider(key);
-
     const originLine = data.origin
       ? `\nThe traveller is departing from: ${data.origin}. Use it as the origin and set needs_origin to false.`
       : "";
 
     const preference = data.preference?.trim() ?? "";
     const preferenceLine = preference
-      ? `\nTrip preference (free text from the traveller, shape the whole plan around it): ${preference}`
+      ? `\nTrip preference (free text, shape the whole plan around it): ${preference}`
       : `\nThe traveller skipped the preference question — use a balanced default plan and return "trip_preference": "".`;
 
-    let text = "";
-    try {
-      const result = streamText({
-        model: gateway("google/gemini-3.6-flash"),
-        system: SYSTEM,
-        prompt: `${data.prompt}${originLine}${preferenceLine}\n\nReturn ONLY the raw JSON object described in the system message.`,
-      });
-      text = await result.text;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "AI request failed";
-      console.error("[Explorion] AI request failed:", message);
-      if (message.includes("429")) throw new Error("Too many requests — try again shortly.");
-      if (message.includes("402")) throw new Error("AI credits exhausted for this workspace.");
-      throw new Error("Something went wrong generating your trip — try again.");
-    }
-
-    console.log("[Explorion] raw AI response:", text);
+    const text = await callAi(
+      SYSTEM,
+      `${data.prompt}${originLine}${preferenceLine}\n\nReturn ONLY the raw JSON object described in the system message.`,
+      "plan",
+    );
 
     const parsed = planSchema.safeParse(extractJson(text));
     if (!parsed.success) {
@@ -129,64 +197,27 @@ export const generateTripPlan = createServerFn({ method: "POST" })
     }
     const raw = parsed.data;
 
-
     const origin = data.origin?.trim() || raw.origin?.trim() || null;
     const days = Math.max(1, Math.round(raw.duration_days || raw.itinerary.length || 3));
-
-    const itinerary = raw.itinerary.slice(0, days).map((d, i) => ({
-      day: i + 1,
-      title:
-        i === 0
-          ? "Arrival & first impressions"
-          : i === days - 1
-            ? "Slow morning & departure"
-            : `Exploring ${raw.destination}`,
-      slots: [d.morning, d.afternoon, d.evening].map((activity, j) => ({
-        label: ["Morning", "Afternoon", "Evening"][j] ?? "Morning",
-        tag: SLOT_TAGS[j] ?? "",
-        activity,
-      })),
-    }));
-
-    const bb = raw.budget_breakdown;
-    const items = [
-      { label: "Stay", amount: Math.max(0, Math.round(bb.stay)) },
-      { label: "Transit", amount: Math.max(0, Math.round(bb.transit)) },
-      { label: "Meals", amount: Math.max(0, Math.round(bb.meals)) },
-      { label: "Activities", amount: Math.max(0, Math.round(bb.activities)) },
-    ];
-    const total = items.reduce((s, b) => s + b.amount, 0) || raw.budget_total || 1;
+    const itinerary = raw.itinerary
+      .slice(0, days)
+      .map((d, i) => toDay(d, i, days, raw.destination));
 
     return {
       destination: raw.destination,
       origin,
       needsOrigin: !origin,
       days,
-      budget: Math.round(raw.budget_total || total),
+      budget: Math.round(raw.budget_total || 0),
       month: raw.month || "Anytime",
       transport: {
-        train: {
-          label: "Train (SL / 3A)",
-          min: Math.round(raw.transport.train.low),
-          max: Math.round(raw.transport.train.high),
-        },
-        flight: {
-          label: "Flight (economy)",
-          min: Math.round(raw.transport.flight.low),
-          max: Math.round(raw.transport.flight.high),
-        },
+        modes: toModes(raw.transport.available_modes),
+        recommendedMode: raw.transport.recommended_mode,
+        recommendedReason: raw.transport.recommended_reason,
       },
       itinerary,
-      budgetBreakdown: items.map((b) => ({
-        ...b,
-        pct: Math.round((b.amount / total) * 100),
-      })),
-      stay: {
-        name: raw.stay.name,
-        type: raw.stay.type,
-        pricePerNight: Math.round(raw.stay.price_per_night),
-        why: raw.stay.why,
-      },
+      budgetBreakdown: toBreakdown(raw.budget_breakdown, raw.budget_total),
+      stayOptions: toStays(raw.stay_options),
       agentLabels: {
         transport: raw.agent_labels.transport,
         stay: raw.agent_labels.stay,
@@ -197,6 +228,104 @@ export const generateTripPlan = createServerFn({ method: "POST" })
       style: raw.style,
       vibe: raw.vibe,
       debugRaw: text,
-
     };
+  });
+
+/* ---------------- Refinement ---------------- */
+
+const RefineInput = z.object({
+  request: z.string(),
+  scope: z.array(z.string()),
+  plan: z.unknown(),
+});
+
+const refineSchema = z.object({
+  changed: z.array(z.string()),
+  summary: z.string(),
+  transport: z
+    .object({
+      available_modes: z.array(modeSchema).min(1),
+      recommended_mode: z.string(),
+      recommended_reason: z.string(),
+    })
+    .nullable()
+    .optional(),
+  stay_options: z.array(stayOptionSchema).min(1).nullable().optional(),
+  itinerary_days: z.array(daySchema).nullable().optional(),
+  budget_breakdown: breakdownSchema.nullable().optional(),
+});
+
+const REFINE_SYSTEM = `You are Explorion's trip refinement agent.
+
+You receive an existing trip plan JSON and a refinement request. You must change ONLY the sections in scope and return a PARTIAL JSON patch — omit every section that should stay unchanged. Never restate unchanged data.
+
+OUTPUT FORMAT: one raw JSON object, no markdown, no code fences, no prose. First character "{", last "}". INR integers.
+
+Shape:
+{"changed":["transport"|"stay"|"budget"|"day:<n>"...],"summary":string,"transport"?:{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options"?:[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary_days"?:[{"day":number,"morning":string,"afternoon":string,"evening":string}],"budget_breakdown"?:{"stay":number,"transit":number,"meals":number,"activities":number}}
+
+Rules:
+- "changed" lists exactly the sections you actually rewrote; "summary" is a short human sentence like "Updated: Day 2 itinerary, stay options".
+- itinerary_days contains ONLY the days you changed, each keeping its original "day" number.
+- Only include modes that genuinely exist for the route; air-only routes return only flight. own_vehicle costs are fuel + tolls.
+- stay_options is always 3 options within budget, sorted by rating descending.
+- Keep everything consistent with the untouched parts of the plan (same destination, duration, budget).
+- If the request is unclear or out of scope, return {"changed":[],"summary":"Nothing changed — could you be more specific?"}.`;
+
+export type RefinePatch = {
+  changed: string[];
+  summary: string;
+  transport?: TripPlan["transport"];
+  stayOptions?: TripPlan["stayOptions"];
+  itineraryDays?: TripPlan["itinerary"];
+  budgetBreakdown?: TripPlan["budgetBreakdown"];
+};
+
+export const refineTripPlan = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => RefineInput.parse(input))
+  .handler(async ({ data }): Promise<RefinePatch> => {
+    const scopeLine = data.scope.length
+      ? `Sections explicitly marked for change: ${data.scope.join(", ")}. Change ONLY these.`
+      : `No sections were explicitly marked — infer the narrowest scope from the request text and change nothing else.`;
+
+    const text = await callAi(
+      REFINE_SYSTEM,
+      `Existing plan JSON:\n${JSON.stringify(data.plan)}\n\nRefinement request: ${data.request}\n${scopeLine}\n\nReturn ONLY the raw partial JSON patch.`,
+      "refine",
+    );
+
+    const parsed = refineSchema.safeParse(extractJson(text));
+    if (!parsed.success) {
+      console.error("[Explorion] could not parse refinement:", parsed.error.message, text);
+      throw new Error("Couldn't apply that change — try rephrasing.");
+    }
+    const raw = parsed.data;
+
+    const patch: RefinePatch = {
+      changed: raw.changed,
+      summary: raw.summary,
+    };
+    if (raw.transport) {
+      patch.transport = {
+        modes: toModes(raw.transport.available_modes),
+        recommendedMode: raw.transport.recommended_mode,
+        recommendedReason: raw.transport.recommended_reason,
+      };
+    }
+    if (raw.stay_options) patch.stayOptions = toStays(raw.stay_options);
+    if (raw.itinerary_days) {
+      patch.itineraryDays = raw.itinerary_days.map((d) => ({
+        day: Math.round(d.day),
+        title: "",
+        slots: [d.morning, d.afternoon, d.evening].map((activity, j) => ({
+          label: SLOT_LABELS[j] ?? "Morning",
+          tag: SLOT_TAGS[j] ?? "",
+          activity,
+        })),
+      }));
+    }
+    if (raw.budget_breakdown) {
+      patch.budgetBreakdown = toBreakdown(raw.budget_breakdown, 0);
+    }
+    return patch;
   });
