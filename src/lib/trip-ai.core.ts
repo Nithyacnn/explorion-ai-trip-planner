@@ -141,6 +141,23 @@ async function callAi(system: string, prompt: string, tag: string): Promise<stri
 }
 
 
+function toSlots(d: z.infer<typeof daySchema>) {
+  return [d.morning, d.afternoon, d.evening].map((block, j) => ({
+    label: SLOT_LABELS[j] ?? "Morning",
+    tag: block?.time_range?.trim() || SLOT_TAGS[j] || "",
+    overpacked: block?.overpacked === true,
+    stops: (Array.isArray(block?.stops) ? block.stops : [])
+      .filter((s) => s && typeof s.activity === "string" && s.activity.trim())
+      .map((s, i) => ({
+        activity: s.activity.trim(),
+        why: s.why?.trim() || undefined,
+        travelTimeFromPrevious:
+          i > 0 ? s.travel_time_from_previous?.trim() || undefined : undefined,
+        optional: s.optional === true,
+      })),
+  }));
+}
+
 function toDay(d: z.infer<typeof daySchema>, index: number, days: number, destination: string) {
   return {
     day: index + 1,
@@ -150,11 +167,7 @@ function toDay(d: z.infer<typeof daySchema>, index: number, days: number, destin
         : index === days - 1
           ? "Slow morning & departure"
           : `Exploring ${destination}`,
-    slots: [d.morning, d.afternoon, d.evening].map((activity, j) => ({
-      label: SLOT_LABELS[j] ?? "Morning",
-      tag: SLOT_TAGS[j] ?? "",
-      activity,
-    })),
+    slots: toSlots(d),
   };
 }
 
