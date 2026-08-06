@@ -261,7 +261,7 @@ export function TripDashboard({
               ) : (
                 modes.map((t) => {
                   const Icon = MODE_ICONS[t.mode] ?? Plane;
-                  const link = transportSearchLink(t.mode, plan.origin, plan.destination);
+                  const link = transportSearchLink(t.mode, plan.origin, plan.destination, plan.month);
                   const isRec = t.mode === plan.transport?.recommendedMode;
                   return (
                     <div
@@ -482,7 +482,7 @@ export function TripDashboard({
             <div className="mt-4 grid gap-4 sm:grid-cols-3">
               {stays.map((option, i) => {
                 const active = option === stay;
-                const link = staySearchLink(option.name, plan.destination);
+                const link = staySearchLink(option.name, plan.destination, plan.month);
                 return (
                   <div
                     key={`${option.name}-${i}`}

@@ -6,19 +6,21 @@ export function transportSearchLink(
   mode: TransportModeId,
   origin: string | null,
   destination: string,
+  month?: string | null,
 ): { provider: string; url: string } {
   const from = origin ?? "";
+  const when = month && !/flexible/i.test(month) ? ` in ${month}` : "";
   switch (mode) {
     case "flight":
       return {
         provider: "Google Flights",
-        url: `https://www.google.com/travel/flights?q=${q(`flights from ${from} to ${destination}`)}`,
+        url: `https://www.google.com/travel/flights?q=${q(`flights from ${from} to ${destination}${when}`)}`,
       };
     case "train":
       return {
         provider: "IRCTC",
         url: from
-          ? `https://www.google.com/search?q=${q(`IRCTC trains ${from} to ${destination}`)}`
+          ? `https://www.google.com/search?q=${q(`IRCTC trains ${from} to ${destination}${when}`)}`
           : `https://www.irctc.co.in/nget/train-search`,
       };
     case "bus":
@@ -34,14 +36,15 @@ export function transportSearchLink(
     default:
       return {
         provider: "Google",
-        url: `https://www.google.com/search?q=${q(`travel ${from} to ${destination}`)}`,
+        url: `https://www.google.com/search?q=${q(`travel ${from} to ${destination}${when}`)}`,
       };
   }
 }
 
-export function staySearchLink(name: string, destination: string) {
+export function staySearchLink(name: string, destination: string, month?: string | null) {
+  const when = month && !/flexible/i.test(month) ? ` ${month}` : "";
   return {
     provider: "Booking.com",
-    url: `https://www.booking.com/searchresults.html?ss=${q(`${name} ${destination}`)}`,
+    url: `https://www.booking.com/searchresults.html?ss=${q(`${name} ${destination}${when}`)}`,
   };
 }
