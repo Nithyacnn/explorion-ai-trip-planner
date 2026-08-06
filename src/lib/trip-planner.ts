@@ -1,14 +1,14 @@
 export type Stop = {
   activity: string;
-  why?: string;
-  travelTimeFromPrevious?: string;
-  optional?: boolean;
+  why?: string | undefined;
+  travelTimeFromPrevious?: string | undefined;
+  optional?: boolean | undefined;
 };
 export type Slot = {
   label: string;
   tag: string;
   stops: Stop[];
-  overpacked?: boolean;
+  overpacked?: boolean | undefined;
 };
 export type DayPlan = { day: number; title: string; slots: Slot[] };
 
