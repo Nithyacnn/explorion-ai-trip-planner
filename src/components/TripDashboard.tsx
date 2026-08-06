@@ -19,12 +19,7 @@ import {
   Ticket,
   X,
 } from "lucide-react";
-import {
-  formatINR,
-  type Stay,
-  type TransportModeId,
-  type TripPlan,
-} from "@/lib/trip-planner";
+import { formatINR, type Stay, type TransportModeId, type TripPlan } from "@/lib/trip-planner";
 import { SectionBoundary } from "@/components/SectionBoundary";
 import { staySearchLink, transportSearchLink } from "@/lib/booking-links";
 
@@ -286,17 +281,52 @@ export function TripDashboard({
                       <div className="mt-3 grid gap-2 sm:grid-cols-3">
                         {(Array.isArray(day.slots) ? day.slots : []).map((slot, i) => {
                           const Icon = slotIcons[i] ?? Sun;
+                          const stops = Array.isArray(slot.stops) ? slot.stops : [];
                           return (
                             <div
                               key={slot.label}
                               className="rounded-lg border border-current/10 bg-black/[0.03] p-3"
                             >
-                              <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider opacity-70">
-                                <Icon className="size-3" />
-                                {slot.label}
+                              <div className="flex items-center justify-between gap-1.5">
+                                <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider opacity-70">
+                                  <Icon className="size-3" />
+                                  {slot.label}
+                                </div>
+                                {slot.overpacked ? (
+                                  <span className="rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-600">
+                                    Tight fit
+                                  </span>
+                                ) : null}
                               </div>
-                              <p className="mt-1 text-sm leading-snug">{slot.activity}</p>
-                              <p className="mt-1 text-[11px] opacity-60">{slot.tag}</p>
+                              <div className="mt-1.5 space-y-2">
+                                {stops.length === 0 ? (
+                                  <p className="text-sm leading-snug opacity-70">Free time</p>
+                                ) : (
+                                  stops.map((stop, si) => (
+                                    <div key={si}>
+                                      {si > 0 && stop.travelTimeFromPrevious ? (
+                                        <p className="mb-1 text-[10px] italic opacity-50">
+                                          ↳ {stop.travelTimeFromPrevious}
+                                        </p>
+                                      ) : null}
+                                      <p className="text-sm leading-snug">
+                                        {stop.activity}
+                                        {stop.optional ? (
+                                          <span className="ml-1.5 rounded-full bg-current/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide opacity-60">
+                                            optional
+                                          </span>
+                                        ) : null}
+                                      </p>
+                                      {stop.why ? (
+                                        <p className="mt-0.5 text-[11px] italic opacity-60">
+                                          why: {stop.why}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                              <p className="mt-2 text-[11px] opacity-60">{slot.tag}</p>
                             </div>
                           );
                         })}
@@ -318,9 +348,7 @@ export function TripDashboard({
               <h3 className="font-display flex items-center gap-2 text-xl">
                 <BedDouble className="size-5" /> Where to stay
               </h3>
-              <p className="mt-1 text-xs opacity-70">
-                Tap an option to use it in your budget.
-              </p>
+              <p className="mt-1 text-xs opacity-70">Tap an option to use it in your budget.</p>
             </div>
             <MarkToggle marked={!!marks["stay"]} onToggle={() => onToggleMark("stay")} />
           </div>
@@ -391,10 +419,7 @@ export function TripDashboard({
             </h3>
             <div className="flex items-center gap-3">
               <p className="text-sm opacity-70">Total {formatINR(total)}</p>
-              <MarkToggle
-                marked={!!marks["budget"]}
-                onToggle={() => onToggleMark("budget")}
-              />
+              <MarkToggle marked={!!marks["budget"]} onToggle={() => onToggleMark("budget")} />
             </div>
           </div>
           <AgentTag label={plan.agentLabels?.budget} />
@@ -448,8 +473,8 @@ export function TripDashboard({
             </div>
             <h3 className="font-display mt-4 text-2xl">Demo booking held</h3>
             <p className="mt-2 text-sm opacity-80">
-              This is a simulated confirmation — no payment was taken and nothing has been
-              booked with any provider. Use the “Search on …” links to book for real.
+              This is a simulated confirmation — no payment was taken and nothing has been booked
+              with any provider. Use the “Search on …” links to book for real.
             </p>
             <p className="mt-4 rounded-xl bg-primary/15 px-4 py-3 text-sm font-semibold tracking-wide">
               Booking reference · {booking}
