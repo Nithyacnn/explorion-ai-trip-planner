@@ -1,4 +1,15 @@
-export type Slot = { label: string; tag: string; activity: string };
+export type Stop = {
+  activity: string;
+  why?: string;
+  travelTimeFromPrevious?: string;
+  optional?: boolean;
+};
+export type Slot = {
+  label: string;
+  tag: string;
+  stops: Stop[];
+  overpacked?: boolean;
+};
 export type DayPlan = { day: number; title: string; slots: Slot[] };
 
 export type TransportModeId = "flight" | "train" | "bus" | "own_vehicle";
@@ -288,7 +299,7 @@ export function planTrip(prompt: string): TripPlan {
       slots: SLOT_META.map((meta, j) => ({
         label: meta.label,
         tag: meta.tag,
-        activity: spots[j] ?? "Free time to explore",
+        stops: [{ activity: spots[j] ?? "Free time to explore" }],
       })),
     };
   });
