@@ -102,6 +102,13 @@ function MarkToggle({
   );
 }
 
+const formatTripDate = (value: string) => {
+  const d = new Date(`${value}T00:00:00`);
+  return Number.isNaN(d.getTime())
+    ? value
+    : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+};
+
 export type DashboardProps = {
   plan: TripPlan;
   onEditPreference?: () => void;
