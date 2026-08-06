@@ -39,7 +39,7 @@ const MODE_ICONS: Record<TransportModeId, typeof Plane> = {
 
 const AI_CAPTION = "AI-estimated ranges, not live pricing.";
 
-function AgentTag({ label }: { label?: string }) {
+function AgentTag({ label }: { label?: string | undefined }) {
   if (!label) return null;
   return (
     <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary">
