@@ -316,19 +316,30 @@ export function planTrip(prompt: string): TripPlan {
     budget,
     month,
     transport: {
-      train: {
-        label: "Train (SL / 3A)",
-        min: Math.round((dest.trainMin * seasonBump) / 50) * 50,
-        max: Math.round((dest.trainMax * seasonBump) / 50) * 50,
-      },
-      flight: {
-        label: "Flight (economy)",
-        min: Math.round((dest.flightMin * seasonBump) / 50) * 50,
-        max: Math.round((dest.flightMax * seasonBump) / 50) * 50,
-      },
+      modes: [
+        {
+          mode: "train" as const,
+          label: MODE_LABELS.train,
+          min: Math.round((dest.trainMin * seasonBump) / 50) * 50,
+          max: Math.round((dest.trainMax * seasonBump) / 50) * 50,
+          duration: "Overnight",
+          notes: "Slower, easiest on budget",
+        },
+        {
+          mode: "flight" as const,
+          label: MODE_LABELS.flight,
+          min: Math.round((dest.flightMin * seasonBump) / 50) * 50,
+          max: Math.round((dest.flightMax * seasonBump) / 50) * 50,
+          duration: "1–3 hrs",
+          notes: "Fastest, book 3+ weeks ahead",
+        },
+      ],
+      recommendedMode: "train",
+      recommendedReason: "Cheapest option for this route on an offline estimate.",
     },
     itinerary,
     budgetBreakdown,
+    stayOptions: [],
   };
 }
 
