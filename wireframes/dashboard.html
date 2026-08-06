@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Explorion — Wireframe: Trip Dashboard</title>
+  <style>
+    :root{--navy:#0B132B;--brass:#D4AF37;--card:#F8F6F2;--muted:#98A0B3;--fg:#111}
+    *{box-sizing:border-box;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial}
+    body{margin:0;min-height:100vh;background:linear-gradient(160deg,#0b132b 0%,#081022 100%);color:#fff;padding:28px}
+    .container{max-width:1100px;margin:0 auto}
+    header{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:20px}
+    .summary h2{margin:0;font-size:28px;color:#fff}
+    .summary p{color:rgba(255,255,255,0.75);margin:6px 0 0 0;font-size:13px}
+    .bookBtn{background:var(--brass);color:#111;padding:10px 14px;border-radius:10px;border:none;font-weight:700}
+    .grid{display:grid;grid-template-columns:320px 1fr;gap:18px}
+    .col-left{display:flex;flex-direction:column;gap:14px}
+    .card{background:var(--card);color:var(--fg);padding:14px;border-radius:12px}
+    .transport-item{display:flex;gap:10px;align-items:flex-start;padding:10px;border-radius:10px;background:rgba(0,0,0,0.03);margin-top:8px}
+    .transport-item .icon{width:44px;height:44;border-radius:10px;background:var(--brass);display:flex;align-items:center;justify-content:center;font-weight:700}
+    .timeline{list-style:none;padding:0;margin:0}
+    .day{margin-bottom:12px;padding-left:18px;border-left:2px solid rgba(255,255,255,0.06)}
+    .day .bubble{background:var(--card);color:var(--fg);padding:10px;border-radius:10px;margin-bottom:8px}
+    .budget .bar{height:10px;background:rgba(0,0,0,0.06);border-radius:999px;overflow:hidden;margin-top:6px}
+    .budget .bar > i{display:block;height:100%;background:var(--brass);width:40%}
+    @media(max-width:900px){.grid{grid-template-columns:1fr;}.col-left{order:2}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="summary">
+        <p style="text-transform:uppercase;font-size:12px;letter-spacing:0.18em;color:rgba(255,255,255,0.7)">Your plan</p>
+        <h2>3 days in Goa</h2>
+        <p>From Bengaluru · Oct · Budget ₹20,000 per person · 3-day itinerary</p>
+      </div>
+      <div>
+        <button class="bookBtn">Book this trip</button>
+      </div>
+    </header>
+
+    <div class="grid">
+      <div class="col-left">
+        <div class="card">
+          <h3 style="margin:0">Transport options</h3>
+          <p style="margin:6px 0;color:#666;font-size:13px">Round-trip fares (per person)</p>
+
+          <div class="transport-item">
+            <div class="icon">FL</div>
+            <div style="flex:1">
+              <div style="font-weight:700">Flight</div>
+              <div style="margin-top:6px;font-size:16px">₹5,500 – ₹9,000</div>
+              <div style="font-size:12px;color:#666;margin-top:6px">Duration: 1h 10m</div>
+            </div>
+          </div>
+
+          <div class="transport-item">
+            <div class="icon">TR</div>
+            <div style="flex:1">
+              <div style="font-weight:700">Train (3A)</div>
+              <div style="margin-top:6px;font-size:16px">₹1,500 – ₹3,200</div>
+              <div style="font-size:12px;color:#666;margin-top:6px">Duration: 10h</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 style="margin:0">Stay options</h3>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <div style="flex:1;background:rgba(0,0,0,0.03);padding:10px;border-radius:10px">
+              <div style="font-weight:700">Comfort Inn</div>
+              <div style="font-size:13px;color:#666;margin-top:6px">₹2,100 / night · 4.3 ★</div>
+            </div>
+            <div style="flex:1;background:rgba(0,0,0,0.03);padding:10px;border-radius:10px">
+              <div style="font-weight:700">Seaside BnB</div>
+              <div style="font-size:13px;color:#666;margin-top:6px">₹1,600 / night · 4.0 ★</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card" style="margin-bottom:14px">
+          <h3 style="margin:0 0 8px 0">Day-by-day itinerary</h3>
+          <ol class="timeline">
+            <li class="day">
+              <div class="bubble">
+                <div style="display:flex;justify-content:space-between">
+                  <strong>Day 1 · Beach day</strong><span style="font-size:12px;color:#666">Morning · Afternoon · Evening</span>
+                </div>
+                <div style="margin-top:8px;color:#444">Morning: Calangute beach walk — Afternoon: Lunch & shopping — Evening: Sunset at Fort Aguada</div>
+              </div>
+            </li>
+            <li class="day">
+              <div class="bubble">
+                <div style="display:flex;justify-content:space-between">
+                  <strong>Day 2 · Island trip</strong><span style="font-size:12px;color:#666">Boat trip</span>
+                </div>
+                <div style="margin-top:8px;color:#444">Full day island boat trip, snorkeling optional</div>
+              </div>
+            </li>
+          </ol>
+        </div>
+
+        <div class="card budget">
+          <h3 style="margin:0">Budget breakdown</h3>
+          <div style="margin-top:10px">
+            <div style="display:flex;justify-content:space-between"><span>Stay</span><strong>₹6,000 · 40%</strong></div>
+            <div class="bar"><i style="width:40%"></i></div>
+
+            <div style="display:flex;justify-content:space-between;margin-top:10px"><span>Transit</span><strong>₹2,800 · 18%</strong></div>
+            <div class="bar"><i style="width:18%"></i></div>
+
+            <div style="display:flex;justify-content:space-between;margin-top:10px"><span>Meals</span><strong>₹4,000 · 26%</strong></div>
+            <div class="bar"><i style="width:26%"></i></div>
+
+            <div style="display:flex;justify-content:space-between;margin-top:10px"><span>Activities</span><strong>₹2,000 · 16%</strong></div>
+            <div class="bar"><i style="width:16%"></i></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>
