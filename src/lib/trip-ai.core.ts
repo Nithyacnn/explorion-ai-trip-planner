@@ -305,11 +305,12 @@ You receive an existing trip plan JSON and a refinement request. You must change
 OUTPUT FORMAT: one raw JSON object, no markdown, no code fences, no prose. First character "{", last "}". INR integers.
 
 Shape:
-{"changed":["transport"|"stay"|"budget"|"day:<n>"...],"summary":string,"transport"?:{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options"?:[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary_days"?:[{"day":number,"morning":string,"afternoon":string,"evening":string}],"budget_breakdown"?:{"stay":number,"transit":number,"meals":number,"activities":number}}
+{"changed":["transport"|"stay"|"budget"|"day:<n>"...],"summary":string,"transport"?:{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options"?:[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary_days"?:[{"day":number,"morning":BLOCK,"afternoon":BLOCK,"evening":BLOCK}] where BLOCK = {"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean}],"time_range":string,"overpacked":boolean},"budget_breakdown"?:{"stay":number,"transit":number,"meals":number,"activities":number}}
 
 Rules:
 - "changed" lists exactly the sections you actually rewrote; "summary" is a short human sentence like "Updated: Day 2 itinerary, stay options".
 - itinerary_days contains ONLY the days you changed, each keeping its original "day" number.
+- Block density follows the traveller's pace: calm → 1 stop per block, default → 1-2, adventurous/packed → up to 3-4 where realistic. Every stop after the first needs "travel_time_from_previous"; never pad a block with filler; set "overpacked": true when the stops plus travel realistically exceed time_range.
 - Only include modes that genuinely exist for the route; air-only routes return only flight. own_vehicle costs are fuel + tolls.
 - stay_options is always 3 options within budget, sorted by rating descending.
 - Keep everything consistent with the untouched parts of the plan (same destination, duration, budget).
