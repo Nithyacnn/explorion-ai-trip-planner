@@ -56,12 +56,16 @@ export type VisaInfo = {
   notes: string;
 };
 
+export type TravelDates = { startDate: string | null; endDate: string | null };
+
 export type TripPlan = {
   destination: string;
   origin: string | null;
   needsOrigin: boolean;
   travelerCount: number | null;
   needsTravelerCount: boolean;
+  travelDates?: TravelDates | null;
+  needsDates?: boolean;
   days: number;
   budget: number;
   month: string;
