@@ -6,6 +6,7 @@ import {
   Car,
   Sun,
   Sunset,
+  Sunrise,
   Moon,
   Wallet,
   BedDouble,
@@ -23,7 +24,7 @@ import { formatINR, type Stay, type TransportModeId, type TripPlan } from "@/lib
 import { SectionBoundary } from "@/components/SectionBoundary";
 import { staySearchLink, transportSearchLink } from "@/lib/booking-links";
 
-const slotIcons = [Sun, Sunset, Moon];
+const slotIcons = [Sunrise, Sun, Sunset, Moon];
 
 const MODE_ICONS: Record<TransportModeId, typeof Plane> = {
   flight: Plane,
@@ -278,7 +279,7 @@ export function TripDashboard({
                           onToggle={() => onToggleMark(`day:${day.day}`)}
                         />
                       </div>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                         {(Array.isArray(day.slots) ? day.slots : []).map((slot, i) => {
                           const Icon = slotIcons[i] ?? Sun;
                           const stops = Array.isArray(slot.stops) ? slot.stops : [];
