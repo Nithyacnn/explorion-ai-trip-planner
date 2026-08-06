@@ -98,7 +98,14 @@ Rules:
 - Each mode: low/high are realistic ROUND-TRIP per-person costs for that exact pair; "duration" is a human string like "12 hrs each way"; "notes" is one short practical line. For "own_vehicle", low/high estimate round-trip FUEL + TOLL cost for the route (not a ticket price).
 - recommended_mode must be one of the modes you returned. recommended_reason must weigh the traveller's stated style/preference and budget against cost AND duration — a genuine trade-off sentence (e.g. "flight recommended: saves 14 hours for only ₹2,000 more on a comfort-first trip"), never just "cheapest".
 - stay_options: exactly 3 realistic distinct properties that each fit within the stated budget, with name, type (hotel/homestay/resort/hostel), price_per_night, rating (0-5) and a one-line "why". Sort by rating descending.
-- itinerary: exactly duration_days entries, each with specific named morning, afternoon and evening activities at the destination, tailored to the detected travel style.
+- itinerary: exactly duration_days entries. Each day has three blocks (morning, afternoon, evening); each block is an object with "stops", "time_range" (e.g. "08:00 – 12:00") and "overpacked".
+
+Activity density (important — there is NO fixed cap of 2 stops):
+- Set target density from the traveller's pace / trip_preference: calm, relaxed or "less travel" → exactly 1 stop per block (fewer, longer, unhurried visits); unspecified → 1-2 stops; adventurous, packed or "see everything" → up to 3-4 stops per block, but ONLY where the destination genuinely supports it and real travel times allow.
+- Every stop after the first in a block MUST have "travel_time_from_previous" as a human string ("12 min walk", "25 min drive"). The first stop of a block uses an empty string.
+- Never add a stop just to fill space. Remote or rural destinations with long distances between sights stay sparse — 1 stop is a valid, good block.
+- "why" is one short clause explaining the pick; "optional" is true only for a genuinely skippable extra.
+- If the stops plus their travel times realistically exceed the block's time_range, set "overpacked": true on that block (otherwise false) instead of pretending it fits.
 - budget_breakdown: stay + transit + meals + activities must sum to approximately budget_total, and the top-rated stay's price_per_night × duration_days should roughly match budget_breakdown.stay.
 - agent_labels must be exactly: transport "Research Agent", stay "Property Verification Agent", itinerary "Itinerary Builder Agent", budget_breakdown "Budget Optimisation Agent".
 - month: the travel month mentioned, else "Anytime". style: romantic, solo, luxury, budget, family, adventure or balanced. vibe: a short 3-6 word description.
