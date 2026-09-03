@@ -1,4 +1,4 @@
-import { streamText } from "ai";
+import { APICallError, streamText } from "ai";
 import { z } from "zod";
 import { extractJson } from "@/lib/json-extract";
 import { MODE_LABELS, type TripPlan, type TransportModeId } from "@/lib/trip-planner";
@@ -179,7 +179,34 @@ const SLOT_FILLERS = [
   "Relaxed dinner near the stay",
 ];
 
-async function callAi(system: string, prompt: string, tag: string): Promise<string> {
+/** Pull the HTTP status out of an AI SDK error (APICallError) or a message that embeds it. */
+function statusOf(error: unknown): number | undefined {
+  if (APICallError.isInstance(error)) return error.statusCode;
+  const message = error instanceof Error ? error.message : "";
+  const m = message.match(/\b(400|401|402|403|429|5\d\d)\b/);
+  return m ? Number(m[1]) : undefined;
+}
+
+function friendlyAiError(error: unknown, aborted: boolean, fallback: string): Error {
+  if (aborted) return new Error("That took too long — please try again.");
+  const status = statusOf(error);
+  if (status === 402)
+    return new Error(
+      "AI credits are exhausted for this workspace — add credits in Lovable, then retry.",
+    );
+  if (status === 403) return new Error("AI access is blocked by workspace policy.");
+  if (status === 429) return new Error("Too many requests — try again in a moment.");
+  if (status === 401) return new Error("AI is not configured correctly (invalid API key).");
+  if (status && status >= 500) return new Error("The AI service hiccuped — please retry.");
+  return new Error(fallback);
+}
+
+async function callAi(
+  system: string,
+  prompt: string,
+  tag: string,
+  fallback = "Something went wrong generating your trip — try again.",
+): Promise<string> {
   const key = process.env["LOVABLE_API_KEY"];
   if (!key) throw new Error("AI is not configured yet.");
   const { createLovableAiGatewayProvider } = await import("@/lib/ai-gateway.server");
@@ -192,19 +219,47 @@ async function callAi(system: string, prompt: string, tag: string): Promise<stri
       system,
       prompt,
       abortSignal: controller.signal,
+      maxRetries: 0,
     });
-    return await result.text;
+    const text = await result.text;
+    console.log(`[Explorion] ${tag} raw AI response (${text.length} chars):`, text.slice(0, 2000));
+    return text;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "AI request failed";
-    console.error(`[Explorion] ${tag} AI request failed:`, message);
-    if (controller.signal.aborted)
-      throw new Error("That took too long — please try again.");
-    if (message.includes("429")) throw new Error("Too many requests — try again shortly.");
-    if (message.includes("402")) throw new Error("AI credits exhausted for this workspace.");
-    throw new Error("Something went wrong generating your trip — try again.");
+    console.error(
+      `[Explorion] ${tag} AI request failed (status ${statusOf(error) ?? "n/a"}):`,
+      error instanceof Error ? error.message : error,
+    );
+    throw friendlyAiError(error, controller.signal.aborted, fallback);
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Parse model text against a schema. If the first pass fails (fences, prose, wrong keys,
+ * stringified numbers…) run ONE repair call that hands the model its own output plus the
+ * validation errors and asks for corrected raw JSON.
+ */
+async function parseWithRepair<T extends z.ZodTypeAny>(
+  schema: T,
+  text: string,
+  tag: string,
+  normalise: (value: unknown) => unknown = (v) => v,
+): Promise<z.infer<T>> {
+  const first = schema.safeParse(normalise(extractJson(text)));
+  if (first.success) return first.data;
+  console.warn(`[Explorion] ${tag} JSON failed validation, attempting repair:`, first.error.message);
+
+  const repaired = await callAi(
+    `You repair JSON. You receive a model response that was supposed to be one raw JSON object plus the validation errors it produced. Return ONLY the corrected raw JSON object — no markdown, no code fences, no commentary. Keep all valid content, fix key names, types (numbers must be plain integers, not strings), remove trailing commas and any prose.`,
+    `Validation errors:\n${first.error.message.slice(0, 3000)}\n\nOriginal response:\n${text.slice(0, 60_000)}`,
+    `${tag}-repair`,
+    "The AI returned an unreadable answer — please try again.",
+  );
+  const second = schema.safeParse(normalise(extractJson(repaired)));
+  if (second.success) return second.data;
+  console.error(`[Explorion] ${tag} JSON still invalid after repair:`, second.error.message, repaired);
+  throw new Error("The AI returned an unreadable answer — please try again.");
 }
 
 
@@ -332,12 +387,7 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
       "plan",
     );
 
-    const parsed = planSchema.safeParse(extractJson(text));
-    if (!parsed.success) {
-      console.error("[Explorion] could not parse AI plan:", parsed.error.message, text);
-      throw new Error("Something went wrong generating your trip — try again.");
-    }
-    const raw = parsed.data;
+    const raw = await parseWithRepair(planSchema, text, "plan");
 
     const origin = data.origin?.trim() || raw.origin?.trim() || null;
     const suppliedCount =
@@ -405,15 +455,153 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
 
 /* ---------------- Refinement ---------------- */
 
+// The CURRENT plan as the client holds it. Validated loosely so a malformed or stale
+// client payload fails fast with a clear error instead of reaching the model.
+const currentPlanSchema = z.object({
+  destination: z.string(),
+  origin: z.string().nullable().optional(),
+  travelerCount: z.number().nullable().optional(),
+  travelDates: z
+    .object({ startDate: z.string().nullable(), endDate: z.string().nullable() })
+    .nullable()
+    .optional(),
+  days: z.number(),
+  budget: z.number(),
+  month: z.string().optional(),
+  style: z.string().optional(),
+  tripPreference: z.string().optional(),
+  international: z.boolean().optional(),
+  transport: z.object({
+    modes: z.array(
+      z.object({
+        mode: z.string(),
+        min: z.number(),
+        max: z.number(),
+        duration: z.string(),
+        notes: z.string(),
+      }),
+    ),
+    recommendedMode: z.string(),
+    recommendedReason: z.string(),
+  }),
+  itinerary: z.array(
+    z.object({
+      day: z.number(),
+      title: z.string().optional(),
+      slots: z.array(
+        z.object({
+          label: z.string(),
+          tag: z.string(),
+          overpacked: z.boolean().optional(),
+          stops: z.array(
+            z.object({
+              activity: z.string(),
+              why: z.string().optional(),
+              travelTimeFromPrevious: z.string().optional(),
+              optional: z.boolean().optional(),
+            }),
+          ),
+        }),
+      ),
+    }),
+  ),
+  budgetBreakdown: z.array(z.object({ label: z.string(), amount: z.number(), pct: z.number() })),
+  stayOptions: z.array(
+    z.object({
+      name: z.string(),
+      type: z.string(),
+      pricePerNight: z.number(),
+      rating: z.number(),
+      why: z.string(),
+    }),
+  ),
+});
+
 const RefineInput = z.object({
-  request: z.string(),
+  request: z.string().min(1),
   scope: z.array(z.string()),
-  plan: z.unknown(),
+  plan: currentPlanSchema,
+});
+
+export type RefineInputType = z.infer<typeof RefineInput>;
+export const parseRefineInput = (input: unknown): RefineInputType => RefineInput.parse(input);
+
+/** Re-express the client's camelCase plan in the exact snake_case shape the model must emit. */
+function toRefineContext(p: z.infer<typeof currentPlanSchema>) {
+  const blockKeys = ["early_morning", "morning", "afternoon", "evening"] as const;
+  const breakdown = Object.fromEntries(
+    p.budgetBreakdown.map((b) => [b.label.toLowerCase(), b.amount]),
+  ) as Record<string, number>;
+  return {
+    destination: p.destination,
+    origin: p.origin ?? null,
+    traveler_count: p.travelerCount ?? null,
+    travel_dates: p.travelDates
+      ? { start_date: p.travelDates.startDate, end_date: p.travelDates.endDate }
+      : null,
+    duration_days: p.days,
+    budget_total_per_person: p.budget,
+    month: p.month ?? "Anytime",
+    style: p.style ?? "balanced",
+    trip_preference: p.tripPreference ?? "",
+    international: p.international === true,
+    transport: {
+      available_modes: p.transport.modes.map((m) => ({
+        mode: m.mode,
+        low: m.min,
+        high: m.max,
+        duration: m.duration,
+        notes: m.notes,
+      })),
+      recommended_mode: p.transport.recommendedMode,
+      recommended_reason: p.transport.recommendedReason,
+    },
+    stay_options: p.stayOptions.map((s) => ({
+      name: s.name,
+      type: s.type,
+      price_per_night: s.pricePerNight,
+      rating: s.rating,
+      why: s.why,
+    })),
+    itinerary: p.itinerary.map((d) => {
+      const day: Record<string, unknown> = { day: d.day };
+      blockKeys.forEach((key, j) => {
+        const slot = d.slots[j];
+        day[key] = {
+          time_range: slot?.tag ?? SLOT_TAGS[j],
+          overpacked: slot?.overpacked === true,
+          stops: (slot?.stops ?? []).map((s, i) => ({
+            activity: s.activity,
+            why: s.why ?? "",
+            travel_time_from_previous: i > 0 ? (s.travelTimeFromPrevious ?? "") : "",
+            optional: s.optional === true,
+          })),
+        };
+      });
+      return day;
+    }),
+    budget_breakdown: {
+      stay: breakdown["stay"] ?? 0,
+      transit: breakdown["transit"] ?? 0,
+      meals: breakdown["meals"] ?? 0,
+      activities: breakdown["activities"] ?? 0,
+    },
+  };
+}
+
+const num = z.coerce.number();
+
+const refineDaySchema = z.object({
+  day: num,
+  early_morning: blockSchema.nullable().optional(),
+  morning: blockSchema.nullable().optional(),
+  afternoon: blockSchema.nullable().optional(),
+  evening: blockSchema.nullable().optional(),
 });
 
 const refineSchema = z.object({
-  changed: z.array(z.string()),
-  summary: z.string(),
+  changed: z.array(z.string()).default([]),
+  summary: z.string().default(""),
   transport: z
     .object({
       available_modes: z.array(modeSchema).min(1),
@@ -423,29 +611,64 @@ const refineSchema = z.object({
     .nullable()
     .optional(),
   stay_options: z.array(stayOptionSchema).min(1).nullable().optional(),
-  itinerary_days: z.array(daySchema).nullable().optional(),
+  itinerary_days: z.array(refineDaySchema).nullable().optional(),
   budget_breakdown: breakdownSchema.nullable().optional(),
+  budget_total: num.nullable().optional(),
 });
 
-const REFINE_SYSTEM = `You are Explorion's trip refinement agent.
+/** Accept the common ways a model drifts from the patch shape and map them back. */
+function normaliseRefine(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const v = { ...(value as Record<string, unknown>) };
+  if (v["itinerary_days"] == null && Array.isArray(v["itinerary"])) v["itinerary_days"] = v["itinerary"];
+  if (v["stay_options"] == null && Array.isArray(v["stay"])) v["stay_options"] = v["stay"];
+  if (v["stay_options"] == null && Array.isArray(v["stays"])) v["stay_options"] = v["stays"];
+  if (v["budget_breakdown"] == null && v["budget"] && typeof v["budget"] === "object")
+    v["budget_breakdown"] = v["budget"];
+  if (!Array.isArray(v["changed"])) v["changed"] = [];
+  if (typeof v["summary"] !== "string") v["summary"] = "";
+  // Drop null/empty sections so optional() passes instead of min(1) failing.
+  for (const k of ["transport", "stay_options", "itinerary_days", "budget_breakdown"]) {
+    const s = v[k];
+    if (s == null || (Array.isArray(s) && s.length === 0)) delete v[k];
+  }
+  return v;
+}
 
-You receive an existing trip plan JSON and a refinement request. You must change ONLY the sections in scope and return a PARTIAL JSON patch — omit every section that should stay unchanged. Never restate unchanged data.
+const REFINE_SYSTEM = `You are Explorion's trip refinement agent. You EDIT an existing trip plan; you never start over.
 
-OUTPUT FORMAT: one raw JSON object, no markdown, no code fences, no prose. First character "{", last "}". INR integers.
+INPUT: the traveller's CURRENT plan as JSON (this is the latest version, already including any earlier edits — treat it as the single source of truth) plus a change request.
+OUTPUT: ONE raw JSON PATCH object. No markdown, no \`\`\` fences, no prose before or after. First character "{", last "}". All money values are per-person INR integers (no strings, commas or symbols).
 
-Shape:
-{"changed":["transport"|"stay"|"budget"|"day:<n>"...],"summary":string,"transport"?:{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},"stay_options"?:[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],"itinerary_days"?:[{"day":number,"early_morning":BLOCK,"morning":BLOCK,"afternoon":BLOCK,"evening":BLOCK}] where BLOCK = {"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean}],"time_range":string,"overpacked":boolean},"budget_breakdown"?:{"stay":number,"transit":number,"meals":number,"activities":number}}
+Patch shape (include ONLY the keys you changed; omit the rest entirely):
+{"changed":["transport"|"stay"|"budget"|"day:<n>", ...],
+ "summary":string,
+ "transport"?:{"available_modes":[{"mode":"flight"|"train"|"bus"|"own_vehicle","low":number,"high":number,"duration":string,"notes":string}],"recommended_mode":string,"recommended_reason":string},
+ "stay_options"?:[{"name":string,"type":string,"price_per_night":number,"rating":number,"why":string}],
+ "itinerary_days"?:[{"day":number,"early_morning":BLOCK,"morning":BLOCK,"afternoon":BLOCK,"evening":BLOCK}],
+ "budget_breakdown"?:{"stay":number,"transit":number,"meals":number,"activities":number},
+ "budget_total"?:number}
+BLOCK = {"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean}],"time_range":string,"overpacked":boolean}
 
-Rules:
-- "changed" lists exactly the sections you actually rewrote; "summary" is a short human sentence like "Updated: Day 2 itinerary, stay options".
-- itinerary_days contains ONLY the days you changed, each keeping its original "day" number.
-- Each day has FOUR blocks: early_morning (06:00 – 09:00), morning (09:00 – 13:00), afternoon (13:00 – 17:00), evening (17:00 – 22:00). Every day must cover 06:00–22:00 with no empty block and no gap over ~3 hours, at every pace — pace only changes stop count; an empty block is invalid, fill it with a light default.
-- Every day keeps a specific breakfast, lunch and dinner naming a real place plus the local dish/cuisine in "why"; dietary or cuisine preferences override the local-delicacy default. Meals are never dropped for calm days. If trip_preference names a theme, bias multiple blocks toward it.
-- Block density follows the traveller's pace: calm → 1 stop per block, default → 1-2, adventurous/packed → up to 3-4 where realistic. Every stop after the first needs "travel_time_from_previous"; never pad a block with filler; set "overpacked": true when the stops plus travel realistically exceed time_range.
-- Only include modes that genuinely exist for the route; air-only routes return only flight. own_vehicle costs are fuel + tolls.
-- stay_options is always 3 options within budget, sorted by rating descending.
-- Keep everything consistent with the untouched parts of the plan (same destination, duration, budget).
-- If the request is unclear or out of scope, return {"changed":[],"summary":"Nothing changed — could you be more specific?"}.`;
+Editing operations — perform exactly what is asked and nothing more:
+- MODIFY: change specific stops/blocks/days in place. Return each touched day IN FULL (all four blocks) with its original "day" number, keeping every untouched stop in that day word-for-word.
+- INSERT: add a stop into the correct block of the named day, adjust travel_time_from_previous for the following stop, return that full day.
+- DELETE: remove the named stop/activity; if the block would become empty, fill it with a light default (never empty). Return that full day.
+- REARRANGE / SWAP / MOVE: when activities move between days or days swap order, return EVERY affected day in full, each with its ORIGINAL position number in "day" (day numbers are positions 1..duration_days and never change).
+- REPLACE ("make day 2 calmer", "a food-focused day 3"): rebuild only that day at the requested pace/theme.
+- STAY / TRANSPORT / BUDGET: return the full replacement section (always 3 stays sorted by rating desc; only real modes for the route). A cheaper/pricier stay or transport change must also return an updated "budget_breakdown" (and "budget_total" if the total changes) so the numbers stay consistent.
+- Days not mentioned, and sections not in scope, must NOT appear in the patch. Never return the whole itinerary for a one-day change.
+
+Quality rules for any day you return:
+- Four blocks: early_morning 06:00 – 09:00, morning 09:00 – 13:00, afternoon 13:00 – 17:00, evening 17:00 – 22:00. Full 06:00–22:00 coverage, no empty block, no gap over ~3 hours.
+- Keep a specific breakfast, lunch and dinner naming a real place plus the local dish in "why"; stated dietary/cuisine preferences override the local default.
+- Density follows the traveller's pace: calm → 1 stop per block, default → 1-2, adventurous → up to 3-4 where realistic. Every stop after the first needs "travel_time_from_previous" ("12 min walk"); the first uses "". Set "overpacked": true only when stops plus travel exceed time_range.
+- Stay consistent with the rest of the plan: same destination, origin, dates, traveler count, per-person budget, style and trip_preference.
+
+Meta fields:
+- "changed": exactly the sections you returned, using "day:<n>" for days.
+- "summary": one short human sentence, e.g. "Swapped Day 1 and Day 2 activities" or "Updated: Day 2 itinerary, stay options".
+- If the request is empty, unclear, or asks for something outside this plan, return {"changed":[],"summary":"<one short question asking what to change>"}.`;
 
 export type RefinePatch = {
   changed: string[];
@@ -454,50 +677,86 @@ export type RefinePatch = {
   stayOptions?: TripPlan["stayOptions"];
   itineraryDays?: TripPlan["itinerary"];
   budgetBreakdown?: TripPlan["budgetBreakdown"];
+  budgetTotal?: number;
 };
 
-export type RefineInputType = z.infer<typeof RefineInput>;
-export const parseRefineInput = (input: unknown): RefineInputType => RefineInput.parse(input);
-
 export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePatch> {
-    const scopeLine = data.scope.length
-      ? `Sections explicitly marked for change: ${data.scope.join(", ")}. Change ONLY these.`
-      : `No sections were explicitly marked — infer the narrowest scope from the request text and change nothing else.`;
+  const scopeLine = data.scope.length
+    ? `Sections explicitly marked for change by the traveller: ${data.scope.join(", ")}. Change ONLY these (plus budget_breakdown if costs moved).`
+    : `No sections were explicitly marked — infer the narrowest scope from the request text and change nothing else.`;
 
-    const text = await callAi(
-      REFINE_SYSTEM,
-      `Existing plan JSON:\n${JSON.stringify(data.plan)}\n\nRefinement request: ${data.request}\n${scopeLine}\n\nReturn ONLY the raw partial JSON patch.`,
-      "refine",
-    );
+  const context = toRefineContext(data.plan);
+  const text = await callAi(
+    REFINE_SYSTEM,
+    `CURRENT PLAN (latest version, source of truth):\n${JSON.stringify(context)}\n\nTRAVELLER'S CHANGE REQUEST: ${data.request}\n${scopeLine}\n\nReturn ONLY the raw JSON patch object.`,
+    "refine",
+    "Couldn't apply that change — try rephrasing.",
+  );
 
-    const parsed = refineSchema.safeParse(extractJson(text));
-    if (!parsed.success) {
-      console.error("[Explorion] could not parse refinement:", parsed.error.message, text);
-      throw new Error("Couldn't apply that change — try rephrasing.");
-    }
-    const raw = parsed.data;
+  const raw = await parseWithRepair(refineSchema, text, "refine", normaliseRefine);
 
-    const patch: RefinePatch = {
-      changed: raw.changed,
-      summary: raw.summary,
+  const patch: RefinePatch = { changed: [...raw.changed], summary: raw.summary };
+  const ensureChanged = (key: string) => {
+    if (!patch.changed.includes(key)) patch.changed.push(key);
+  };
+
+  if (raw.transport) {
+    patch.transport = {
+      modes: toModes(raw.transport.available_modes),
+      recommendedMode: raw.transport.recommended_mode,
+      recommendedReason: raw.transport.recommended_reason,
     };
-    if (raw.transport) {
-      patch.transport = {
-        modes: toModes(raw.transport.available_modes),
-        recommendedMode: raw.transport.recommended_mode,
-        recommendedReason: raw.transport.recommended_reason,
+    ensureChanged("transport");
+  }
+  if (raw.stay_options) {
+    patch.stayOptions = toStays(raw.stay_options);
+    ensureChanged("stay");
+  }
+  if (raw.itinerary_days?.length) {
+    const totalDays = data.plan.days;
+    const days = raw.itinerary_days.map((d, i) => {
+      // Fall back to positional numbering if the model returned a full itinerary with bad numbers.
+      const n = Math.round(d.day);
+      const dayNo =
+        n >= 1 && n <= totalDays
+          ? n
+          : raw.itinerary_days!.length === totalDays
+            ? i + 1
+            : n;
+      const existing = data.plan.itinerary.find((x) => x.day === dayNo);
+      return {
+        day: dayNo,
+        title: existing?.title ?? "",
+        slots: toSlots({
+          day: dayNo,
+          early_morning: d.early_morning ?? undefined,
+          morning: d.morning ?? { stops: [] },
+          afternoon: d.afternoon ?? { stops: [] },
+          evening: d.evening ?? { stops: [] },
+        }),
       };
-    }
-    if (raw.stay_options) patch.stayOptions = toStays(raw.stay_options);
-    if (raw.itinerary_days) {
-      patch.itineraryDays = raw.itinerary_days.map((d) => ({
-        day: Math.round(d.day),
-        title: "",
-        slots: toSlots(d),
-      }));
-    }
-    if (raw.budget_breakdown) {
-      patch.budgetBreakdown = toBreakdown(raw.budget_breakdown, 0);
-    }
+    });
+    patch.itineraryDays = days.filter((d) => d.day >= 1 && d.day <= totalDays);
+    for (const d of patch.itineraryDays) ensureChanged(`day:${d.day}`);
+  }
+  if (raw.budget_breakdown) {
+    patch.budgetBreakdown = toBreakdown(raw.budget_breakdown, data.plan.budget);
+    ensureChanged("budget");
+  }
+  if (typeof raw.budget_total === "number" && raw.budget_total > 0) {
+    patch.budgetTotal = Math.round(raw.budget_total);
+    ensureChanged("budget");
+  }
+  // "changed" claimed sections that never arrived → treat as no-op so the UI can say so.
+  const delivered = new Set<string>([
+    ...(patch.transport ? ["transport"] : []),
+    ...(patch.stayOptions ? ["stay"] : []),
+    ...(patch.budgetBreakdown || patch.budgetTotal ? ["budget"] : []),
+    ...(patch.itineraryDays ?? []).map((d) => `day:${d.day}`),
+  ]);
+  patch.changed = patch.changed.filter((c) => delivered.has(c));
+  if (!patch.changed.length && !patch.summary) {
+    patch.summary = "Nothing changed — could you be more specific about what to adjust?";
+  }
   return patch;
 }
