@@ -1,4 +1,4 @@
-import { streamText } from "ai";
+import { APICallError, streamText } from "ai";
 import { z } from "zod";
 import { extractJson } from "@/lib/json-extract";
 import { MODE_LABELS, type TripPlan, type TransportModeId } from "@/lib/trip-planner";
