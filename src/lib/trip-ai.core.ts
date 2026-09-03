@@ -387,12 +387,7 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
       "plan",
     );
 
-    const parsed = planSchema.safeParse(extractJson(text));
-    if (!parsed.success) {
-      console.error("[Explorion] could not parse AI plan:", parsed.error.message, text);
-      throw new Error("Something went wrong generating your trip — try again.");
-    }
-    const raw = parsed.data;
+    const raw = await parseWithRepair(planSchema, text, "plan");
 
     const origin = data.origin?.trim() || raw.origin?.trim() || null;
     const suppliedCount =
