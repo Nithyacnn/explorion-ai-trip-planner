@@ -179,7 +179,34 @@ const SLOT_FILLERS = [
   "Relaxed dinner near the stay",
 ];
 
-async function callAi(system: string, prompt: string, tag: string): Promise<string> {
+/** Pull the HTTP status out of an AI SDK error (APICallError) or a message that embeds it. */
+function statusOf(error: unknown): number | undefined {
+  if (APICallError.isInstance(error)) return error.statusCode;
+  const message = error instanceof Error ? error.message : "";
+  const m = message.match(/\b(400|401|402|403|429|5\d\d)\b/);
+  return m ? Number(m[1]) : undefined;
+}
+
+function friendlyAiError(error: unknown, aborted: boolean, fallback: string): Error {
+  if (aborted) return new Error("That took too long — please try again.");
+  const status = statusOf(error);
+  if (status === 402)
+    return new Error(
+      "AI credits are exhausted for this workspace — add credits in Lovable, then retry.",
+    );
+  if (status === 403) return new Error("AI access is blocked by workspace policy.");
+  if (status === 429) return new Error("Too many requests — try again in a moment.");
+  if (status === 401) return new Error("AI is not configured correctly (invalid API key).");
+  if (status && status >= 500) return new Error("The AI service hiccuped — please retry.");
+  return new Error(fallback);
+}
+
+async function callAi(
+  system: string,
+  prompt: string,
+  tag: string,
+  fallback = "Something went wrong generating your trip — try again.",
+): Promise<string> {
   const key = process.env["LOVABLE_API_KEY"];
   if (!key) throw new Error("AI is not configured yet.");
   const { createLovableAiGatewayProvider } = await import("@/lib/ai-gateway.server");
@@ -192,19 +219,47 @@ async function callAi(system: string, prompt: string, tag: string): Promise<stri
       system,
       prompt,
       abortSignal: controller.signal,
+      maxRetries: 0,
     });
-    return await result.text;
+    const text = await result.text;
+    console.log(`[Explorion] ${tag} raw AI response (${text.length} chars):`, text.slice(0, 2000));
+    return text;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "AI request failed";
-    console.error(`[Explorion] ${tag} AI request failed:`, message);
-    if (controller.signal.aborted)
-      throw new Error("That took too long — please try again.");
-    if (message.includes("429")) throw new Error("Too many requests — try again shortly.");
-    if (message.includes("402")) throw new Error("AI credits exhausted for this workspace.");
-    throw new Error("Something went wrong generating your trip — try again.");
+    console.error(
+      `[Explorion] ${tag} AI request failed (status ${statusOf(error) ?? "n/a"}):`,
+      error instanceof Error ? error.message : error,
+    );
+    throw friendlyAiError(error, controller.signal.aborted, fallback);
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Parse model text against a schema. If the first pass fails (fences, prose, wrong keys,
+ * stringified numbers…) run ONE repair call that hands the model its own output plus the
+ * validation errors and asks for corrected raw JSON.
+ */
+async function parseWithRepair<T extends z.ZodTypeAny>(
+  schema: T,
+  text: string,
+  tag: string,
+  normalise: (value: unknown) => unknown = (v) => v,
+): Promise<z.infer<T>> {
+  const first = schema.safeParse(normalise(extractJson(text)));
+  if (first.success) return first.data;
+  console.warn(`[Explorion] ${tag} JSON failed validation, attempting repair:`, first.error.message);
+
+  const repaired = await callAi(
+    `You repair JSON. You receive a model response that was supposed to be one raw JSON object plus the validation errors it produced. Return ONLY the corrected raw JSON object — no markdown, no code fences, no commentary. Keep all valid content, fix key names, types (numbers must be plain integers, not strings), remove trailing commas and any prose.`,
+    `Validation errors:\n${first.error.message.slice(0, 3000)}\n\nOriginal response:\n${text.slice(0, 60_000)}`,
+    `${tag}-repair`,
+    "The AI returned an unreadable answer — please try again.",
+  );
+  const second = schema.safeParse(normalise(extractJson(repaired)));
+  if (second.success) return second.data;
+  console.error(`[Explorion] ${tag} JSON still invalid after repair:`, second.error.message, repaired);
+  throw new Error("The AI returned an unreadable answer — please try again.");
 }
 
 
