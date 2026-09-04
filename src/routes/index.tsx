@@ -15,6 +15,7 @@ import {
   Trash2,
   AlertTriangle,
 } from "lucide-react";
+import { toast } from "sonner";
 import { generateTripPlan, refineTripPlan } from "@/lib/trip-ai.functions";
 import { destinationVibe, formatINR, type TripPlan } from "@/lib/trip-planner";
 import { TripDashboard } from "@/components/TripDashboard";
@@ -132,6 +133,10 @@ function Home() {
   const [trips, setTrips] = useState<SavedTrip[]>([]);
   const [tripsOpen, setTripsOpen] = useState(false);
   const currentId = useRef<string | undefined>(undefined);
+  // Always points at the latest plan so async refine callbacks never read a stale closure.
+  const planRef = useRef<TripPlan | null>(null);
+  planRef.current = plan;
+  const refineSeq = useRef(0);
 
   const askAi = useServerFn(generateTripPlan);
   const askRefine = useServerFn(refineTripPlan);
@@ -160,6 +165,8 @@ function Home() {
     if (!text || loading) return;
     setAskingTravelers(false);
     setAskingDates(false);
+    refineSeq.current++; // invalidate any in-flight refinement
+    setRefining(false);
     setLoading(true);
     setError(null);
     setPlan(null);
@@ -271,7 +278,8 @@ function Home() {
 
   const runRefine = async () => {
     const request = refineText.trim();
-    if (!plan || refining) return;
+    const basePlan = planRef.current;
+    if (!basePlan || refining) return;
     const scope = Object.entries(marks)
       .filter(([, v]) => v)
       .map(([k]) => k);
@@ -283,24 +291,33 @@ function Home() {
       setRefineError("Tell us what to change about the selected sections.");
       return;
     }
+    const requestId = ++refineSeq.current;
     setRefining(true);
     setRefineError(null);
+    setChangeSummary(null);
     try {
-      const patch = await askRefine({ data: { request, scope, plan } });
+      // Send the LATEST plan (never a stale closure) and strip debug-only fields.
+      const { debugRaw: _debug, ...snapshot } = basePlan as TripPlan & { debugRaw?: unknown };
+      const patch = await askRefine({ data: { request, scope, plan: snapshot } });
       if (import.meta.env.DEV) console.log("[Explorion] refinement patch:", patch);
+      // A newer refine or a fresh generation superseded this one — drop it.
+      if (requestId !== refineSeq.current || planRef.current !== basePlan) return;
       if (!patch.changed.length) {
         setRefineError(patch.summary || "What would you like to change?");
         return;
       }
-      const next: TripPlan = { ...plan };
+      const next: TripPlan = { ...basePlan };
       if (patch.transport) next.transport = patch.transport;
       if (patch.stayOptions) {
         next.stayOptions = patch.stayOptions;
-        setSelectedStay(0);
+        const prevName = basePlan.stayOptions[selectedStay]?.name;
+        const keep = patch.stayOptions.findIndex((s) => s.name === prevName);
+        setSelectedStay(keep >= 0 ? keep : 0);
       }
       if (patch.budgetBreakdown) next.budgetBreakdown = patch.budgetBreakdown;
+      if (patch.budgetTotal) next.budget = patch.budgetTotal;
       if (patch.itineraryDays?.length) {
-        next.itinerary = plan.itinerary.map((day) => {
+        next.itinerary = basePlan.itinerary.map((day) => {
           const replacement = patch.itineraryDays?.find((d) => d.day === day.day);
           return replacement ? { ...day, slots: replacement.slots } : day;
         });
@@ -310,15 +327,16 @@ function Home() {
       setMarks({});
       setRefineText("");
       persist(next);
+      toast.success(patch.summary || "Trip updated");
     } catch (err) {
+      if (requestId !== refineSeq.current) return;
       console.error("[Explorion] refinement failed for request:", request, err);
-      setRefineError(
-        err instanceof Error && err.message
-          ? err.message
-          : "Couldn't apply that change — try again.",
-      );
+      const message =
+        err instanceof Error && err.message ? err.message : "Couldn't apply that change — try again.";
+      setRefineError(message);
+      toast.error("Couldn't update the trip", { description: message });
     } finally {
-      setRefining(false);
+      if (requestId === refineSeq.current) setRefining(false);
     }
   };
 
@@ -719,6 +737,7 @@ function Home() {
               <textarea
                 rows={2}
                 value={refineText}
+                disabled={refining || loading}
                 onChange={(e) => setRefineText(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {

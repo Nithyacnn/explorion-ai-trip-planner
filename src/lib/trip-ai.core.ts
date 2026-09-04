@@ -213,6 +213,10 @@ async function callAi(
   const gateway = createLovableAiGatewayProvider(key);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 90_000);
+  // streamText swallows transport errors (402/429/5xx) and `result.text` then rejects with
+  // a generic "No output generated" — capture the real error via onError so the UI gets
+  // the actual reason (e.g. out of credits) instead of a generic message.
+  let streamError: unknown;
   try {
     const result = streamText({
       model: gateway("google/gemini-3.6-flash"),
@@ -220,11 +224,16 @@ async function callAi(
       prompt,
       abortSignal: controller.signal,
       maxRetries: 0,
+      onError: ({ error }) => {
+        streamError = error;
+      },
     });
     const text = await result.text;
+    if (streamError) throw streamError;
     console.log(`[Explorion] ${tag} raw AI response (${text.length} chars):`, text.slice(0, 2000));
     return text;
-  } catch (error) {
+  } catch (caught) {
+    const error = streamError ?? caught;
     console.error(
       `[Explorion] ${tag} AI request failed (status ${statusOf(error) ?? "n/a"}):`,
       error instanceof Error ? error.message : error,
@@ -739,12 +748,15 @@ export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePa
     patch.itineraryDays = days.filter((d) => d.day >= 1 && d.day <= totalDays);
     for (const d of patch.itineraryDays) ensureChanged(`day:${d.day}`);
   }
-  if (raw.budget_breakdown) {
-    patch.budgetBreakdown = toBreakdown(raw.budget_breakdown, data.plan.budget);
-    ensureChanged("budget");
-  }
   if (typeof raw.budget_total === "number" && raw.budget_total > 0) {
     patch.budgetTotal = Math.round(raw.budget_total);
+    ensureChanged("budget");
+  }
+  if (raw.budget_breakdown) {
+    patch.budgetBreakdown = toBreakdown(
+      raw.budget_breakdown,
+      patch.budgetTotal ?? data.plan.budget,
+    );
     ensureChanged("budget");
   }
   // "changed" claimed sections that never arrived → treat as no-op so the UI can say so.
