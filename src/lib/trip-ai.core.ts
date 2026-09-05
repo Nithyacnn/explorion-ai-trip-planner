@@ -464,76 +464,96 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
 
 /* ---------------- Refinement ---------------- */
 
-// The CURRENT plan as the client holds it. Validated loosely so a malformed or stale
-// client payload fails fast with a clear error instead of reaching the model.
+// The CURRENT plan as the client holds it. Validated leniently (older saved trips may be
+// missing newer fields) so a stale payload still refines instead of failing on a type nit.
+const optStr = z.string().nullable().optional();
 const currentPlanSchema = z.object({
   destination: z.string(),
-  origin: z.string().nullable().optional(),
+  origin: optStr,
   travelerCount: z.number().nullable().optional(),
   travelDates: z
-    .object({ startDate: z.string().nullable(), endDate: z.string().nullable() })
+    .object({ startDate: optStr, endDate: optStr })
     .nullable()
     .optional(),
-  days: z.number(),
-  budget: z.number(),
-  month: z.string().optional(),
-  style: z.string().optional(),
-  tripPreference: z.string().optional(),
-  international: z.boolean().optional(),
-  transport: z.object({
-    modes: z.array(
-      z.object({
-        mode: z.string(),
-        min: z.number(),
-        max: z.number(),
-        duration: z.string(),
-        notes: z.string(),
-      }),
-    ),
-    recommendedMode: z.string(),
-    recommendedReason: z.string(),
-  }),
+  days: num,
+  budget: num.default(0),
+  month: optStr,
+  style: optStr,
+  tripPreference: optStr,
+  international: z.boolean().nullable().optional(),
+  transport: z
+    .object({
+      modes: z
+        .array(
+          z.object({
+            mode: z.string(),
+            min: num.default(0),
+            max: num.default(0),
+            duration: z.string().default(""),
+            notes: z.string().default(""),
+          }),
+        )
+        .default([]),
+      recommendedMode: z.string().default(""),
+      recommendedReason: z.string().default(""),
+    })
+    .default({ modes: [], recommendedMode: "", recommendedReason: "" }),
   itinerary: z.array(
     z.object({
-      day: z.number(),
-      title: z.string().optional(),
-      slots: z.array(
-        z.object({
-          label: z.string(),
-          tag: z.string(),
-          overpacked: z.boolean().optional(),
-          stops: z.array(
-            z.object({
-              activity: z.string(),
-              why: z.string().optional(),
-              travelTimeFromPrevious: z.string().optional(),
-              optional: z.boolean().optional(),
-            }),
-          ),
-        }),
-      ),
+      day: num,
+      title: optStr,
+      slots: z
+        .array(
+          z.object({
+            label: z.string().default(""),
+            tag: z.string().default(""),
+            overpacked: z.boolean().nullable().optional(),
+            stops: z
+              .array(
+                z.object({
+                  activity: z.string(),
+                  why: optStr,
+                  travelTimeFromPrevious: optStr,
+                  optional: z.boolean().nullable().optional(),
+                }),
+              )
+              .default([]),
+          }),
+        )
+        .default([]),
     }),
   ),
-  budgetBreakdown: z.array(z.object({ label: z.string(), amount: z.number(), pct: z.number() })),
-  stayOptions: z.array(
-    z.object({
-      name: z.string(),
-      type: z.string(),
-      pricePerNight: z.number(),
-      rating: z.number(),
-      why: z.string(),
-    }),
-  ),
+  budgetBreakdown: z
+    .array(z.object({ label: z.string(), amount: num.default(0), pct: num.default(0) }))
+    .default([]),
+  stayOptions: z
+    .array(
+      z.object({
+        name: z.string(),
+        type: z.string().default(""),
+        pricePerNight: num.default(0),
+        rating: num.default(0),
+        why: z.string().default(""),
+      }),
+    )
+    .default([]),
 });
 
 const RefineInput = z.object({
   request: z.string().min(1),
-  scope: z.array(z.string()),
+  scope: z.array(z.string()).default([]),
   plan: currentPlanSchema,
 });
 
 export type RefineInputType = z.infer<typeof RefineInput>;
-export const parseRefineInput = (input: unknown): RefineInputType => RefineInput.parse(input);
+export const parseRefineInput = (input: unknown): RefineInputType => {
+  const parsed = RefineInput.safeParse(input);
+  if (parsed.success) return parsed.data;
+  console.error("[Explorion] refine input rejected:", parsed.error.message);
+  throw new Error(
+    "This trip is in an older format and can't be refined — generate it again first.",
+  );
+};
 
 /** Re-express the client's camelCase plan in the exact snake_case shape the model must emit. */
 function toRefineContext(p: z.infer<typeof currentPlanSchema>) {
