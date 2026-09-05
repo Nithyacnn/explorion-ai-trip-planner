@@ -117,8 +117,8 @@ export async function buildTripPdf(plan: TripPlan) {
         if (!stops.length) continue;
         text(slot.label, { size: 9, bold: true, color: GOLD, indent: 6, gap: 3 });
         for (const stop of stops) {
-          const prefix = stop.travelTimeFromPrevious ? `(${stop.travelTimeFromPrevious}) ` : "";
-          text(`• ${prefix}${stop.activity}${stop.optional ? " (optional)" : ""}`, { indent: 14, gap: 2 });
+          const travel = stop.travelTimeFromPrevious ? ` — ${stop.travelTimeFromPrevious} away` : "";
+          text(`• ${stop.activity}${stop.optional ? " (optional)" : ""}${travel}`, { indent: 14, gap: 2 });
           if (stop.why) text(stop.why, { size: 9, color: MUTED, indent: 26, gap: 4 });
         }
         y += 2;
