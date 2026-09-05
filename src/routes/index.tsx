@@ -343,6 +343,9 @@ function Home() {
   const openSavedTrip = (trip: SavedTrip) => {
     setTripsOpen(false);
     if (trip.broken) return;
+    refineSeq.current++; // a refine started on the previous plan must not land on this one
+    setRefining(false);
+    setRefineText("");
     try {
       currentId.current = trip.id;
       setPlan(trip.plan);
