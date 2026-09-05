@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Share2, Link2, ClipboardCopy, Send } from "lucide-react";
+import { Share2, Link2, ClipboardCopy, Send, FileDown } from "lucide-react";
 import { toast } from "sonner";
 import type { TripPlan } from "@/lib/trip-planner";
 import { buildShareText, buildShareUrl } from "@/lib/share-trip";
+import { downloadTripPdf } from "@/lib/trip-pdf";
 
 async function copy(text: string) {
   try {
@@ -29,9 +30,14 @@ export function ShareTrip({ plan }: { plan: TripPlan }) {
 
   const title = `${plan.days} days in ${plan.destination}`;
 
-  const run = async (kind: "native" | "link" | "text") => {
+  const run = async (kind: "native" | "link" | "text" | "pdf") => {
     setBusy(true);
     try {
+      if (kind === "pdf") {
+        await downloadTripPdf(plan);
+        toast.success("PDF downloaded");
+        return;
+      }
       const url = await buildShareUrl(plan);
       if (kind === "link") {
         const ok = await copy(url);
@@ -48,7 +54,7 @@ export function ShareTrip({ plan }: { plan: TripPlan }) {
     } catch (error) {
       if ((error as Error)?.name !== "AbortError") {
         console.error("[Explorion] share failed:", error);
-        toast.error("Sharing failed — please try again.");
+        toast.error("Something went wrong — please try again.");
       }
     } finally {
       setBusy(false);
@@ -88,6 +94,12 @@ export function ShareTrip({ plan }: { plan: TripPlan }) {
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-primary/10"
           >
             <ClipboardCopy className="size-4 opacity-70" /> Copy itinerary as text
+          </button>
+          <button
+            onClick={() => void run("pdf")}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-primary/10"
+          >
+            <FileDown className="size-4 opacity-70" /> Download as PDF
           </button>
           <p className="px-3 py-2 text-[11px] leading-snug opacity-60">
             The link carries the whole plan inside it — anyone with it can view this itinerary.
