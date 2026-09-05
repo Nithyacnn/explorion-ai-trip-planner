@@ -31,6 +31,7 @@ export function ShareTrip({ plan }: { plan: TripPlan }) {
   const title = `${plan.days} days in ${plan.destination}`;
 
   const run = async (kind: "native" | "link" | "text" | "pdf") => {
+    if (busy) return; // ignore a second click while the first action is still running
     setBusy(true);
     try {
       if (kind === "pdf") {
@@ -78,26 +79,30 @@ export function ShareTrip({ plan }: { plan: TripPlan }) {
           {canNativeShare ? (
             <button
               onClick={() => void run("native")}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-primary/10"
+              disabled={busy}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-primary/10 disabled:opacity-50"
             >
               <Send className="size-4 opacity-70" /> Share via apps
             </button>
           ) : null}
           <button
             onClick={() => void run("link")}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-primary/10"
+            disabled={busy}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-primary/10 disabled:opacity-50"
           >
             <Link2 className="size-4 opacity-70" /> Copy shareable link
           </button>
           <button
             onClick={() => void run("text")}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-primary/10"
+            disabled={busy}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-primary/10 disabled:opacity-50"
           >
             <ClipboardCopy className="size-4 opacity-70" /> Copy itinerary as text
           </button>
           <button
             onClick={() => void run("pdf")}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-primary/10"
+            disabled={busy}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-primary/10 disabled:opacity-50"
           >
             <FileDown className="size-4 opacity-70" /> Download as PDF
           </button>

@@ -1,4 +1,5 @@
 import type { TripPlan } from "@/lib/trip-planner";
+import { normalizePlan } from "@/lib/plan-guard";
 
 export type SavedTrip = {
   id: string;
@@ -10,21 +11,17 @@ export type SavedTrip = {
 const STORAGE_KEY = "explorion.saved-trips";
 const LIMIT = 20;
 
-function isPlanLike(value: unknown): value is TripPlan {
-  if (!value || typeof value !== "object") return false;
-  const p = value as Partial<TripPlan>;
-  return typeof p.destination === "string" && Array.isArray(p.itinerary);
-}
-
 export function loadSavedTrips(): SavedTrip[] {
   try {
+    if (typeof window === "undefined") return [];
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.map((entry, i) => {
+    return parsed.slice(0, LIMIT).map((entry, i) => {
       const e = entry as Partial<SavedTrip>;
-      if (!isPlanLike(e?.plan)) {
+      const plan = normalizePlan(e?.plan);
+      if (!plan) {
         return {
           id: typeof e?.id === "string" ? e.id : `broken-${i}`,
           savedAt: typeof e?.savedAt === "string" ? e.savedAt : "",
@@ -35,7 +32,7 @@ export function loadSavedTrips(): SavedTrip[] {
       return {
         id: typeof e.id === "string" ? e.id : `trip-${i}`,
         savedAt: typeof e.savedAt === "string" ? e.savedAt : "",
-        plan: e.plan,
+        plan,
       };
     });
   } catch (error) {
@@ -46,7 +43,8 @@ export function loadSavedTrips(): SavedTrip[] {
 
 export function saveTrip(plan: TripPlan, existingId?: string): SavedTrip[] {
   const id = existingId ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const entry: SavedTrip = { id, savedAt: new Date().toISOString(), plan };
+  const { debugRaw: _debug, ...slim } = plan; // never persist raw model output
+  const entry: SavedTrip = { id, savedAt: new Date().toISOString(), plan: slim };
   try {
     const list = loadSavedTrips().filter((t) => t.id !== id && !t.broken);
     const next = [entry, ...list].slice(0, LIMIT);
