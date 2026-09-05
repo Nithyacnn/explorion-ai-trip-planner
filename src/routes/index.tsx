@@ -388,7 +388,6 @@ function Home() {
       setError(null);
       setRefineError(null);
       setAskingPreference(false);
-      setPrompt(trip.plan.prompt ?? "");
       toast.success(`Opened ${trip.plan.destination}`, {
         description: "Edit any pill or type a change below the plan to refine it.",
       });
