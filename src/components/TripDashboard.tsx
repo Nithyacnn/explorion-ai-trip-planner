@@ -448,13 +448,20 @@ export function TripDashboard({
                                 {stops.length === 0 ? (
                                   <p className="text-sm leading-snug opacity-70">Free time</p>
                                 ) : (
-                                  stops.map((stop, si) => (
-                                    <div key={si}>
+                                  stops.map((stop, si) => {
+                                    const stopKey = `stop:${day.day}:${i}:${si}`;
+                                    const stopMarked = !!marks[stopKey];
+                                    return (
+                                    <div
+                                      key={si}
+                                      className={`rounded-md transition ${stopMarked ? "-mx-1.5 bg-primary/15 px-1.5 py-1 ring-1 ring-primary/50" : ""}`}
+                                    >
                                       {si > 0 && stop.travelTimeFromPrevious ? (
                                         <p className="mb-1 text-[10px] italic opacity-50">
                                           ↳ {stop.travelTimeFromPrevious}
                                         </p>
                                       ) : null}
+                                      <div className="flex items-start justify-between gap-2">
                                       <p className="text-sm leading-snug">
                                         {stop.activity}
                                         {stop.optional ? (
@@ -463,13 +470,30 @@ export function TripDashboard({
                                           </span>
                                         ) : null}
                                       </p>
+                                      <button
+                                        type="button"
+                                        onClick={() => onToggleMark(stopKey)}
+                                        aria-pressed={stopMarked}
+                                        aria-label={stopMarked ? `Keep ${stop.activity}` : `Change ${stop.activity}`}
+                                        title={stopMarked ? "Marked to change — click to keep" : "Change this activity"}
+                                        className={`mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide transition ${
+                                          stopMarked
+                                            ? "border-primary bg-primary text-primary-foreground"
+                                            : "border-current/20 opacity-50 hover:opacity-100"
+                                        }`}
+                                      >
+                                        {stopMarked ? <CircleDot className="size-2.5" /> : <Check className="size-2.5" />}
+                                        {stopMarked ? "Change" : "Keep"}
+                                      </button>
+                                      </div>
                                       {stop.why ? (
                                         <p className="mt-0.5 text-[11px] italic opacity-60">
                                           why: {stop.why}
                                         </p>
                                       ) : null}
                                     </div>
-                                  ))
+                                    );
+                                  })
                                 )}
                               </div>
                               <p className="mt-2 text-[11px] opacity-60">{slot.tag}</p>
