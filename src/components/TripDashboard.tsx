@@ -245,13 +245,16 @@ export function TripDashboard({
             · {days.length}-day itinerary
           </p>
         </div>
-        <button
-          onClick={startBooking}
-          disabled={booked}
-          className="brass-glow inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
-        >
-          <Ticket className="size-4" /> Book this trip
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          {shareable === false ? null : <ShareTrip plan={plan} />}
+          <button
+            onClick={startBooking}
+            disabled={booked}
+            className="brass-glow inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+          >
+            <Ticket className="size-4" /> Book this trip
+          </button>
+        </div>
       </header>
 
       <div className="grid gap-6 lg:grid-cols-3">
