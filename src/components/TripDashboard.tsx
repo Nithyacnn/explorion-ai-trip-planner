@@ -402,6 +402,9 @@ export function TripDashboard({
           <section className="panel-navy p-6 lg:col-span-2">
             <h3 className="font-display text-xl text-foreground">Day-by-day itinerary</h3>
             <AgentTag label={plan.agentLabels?.itinerary} />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Tip: tap “Change” on any single activity or whole day, then refine below — everything marked “Keep” stays untouched.
+            </p>
             {days.length === 0 ? (
               <div className="mt-5 text-sm text-muted-foreground">
                 No itinerary days to show yet.
