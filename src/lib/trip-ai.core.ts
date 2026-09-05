@@ -464,6 +464,8 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
 
 /* ---------------- Refinement ---------------- */
 
+const num = z.coerce.number();
+
 // The CURRENT plan as the client holds it. Validated leniently (older saved trips may be
 // missing newer fields) so a stale payload still refines instead of failing on a type nit.
 const optStr = z.string().nullable().optional();
@@ -618,14 +620,25 @@ function toRefineContext(p: z.infer<typeof currentPlanSchema>) {
   };
 }
 
-const num = z.coerce.number();
+const refineStopSchema = z.object({
+  activity: z.string(),
+  why: z.string().nullable().optional(),
+  travel_time_from_previous: z.string().nullable().optional(),
+  optional: z.boolean().nullable().optional(),
+});
+
+const refineBlockSchema = z.object({
+  stops: z.array(refineStopSchema).default([]),
+  time_range: z.string().nullable().optional(),
+  overpacked: z.boolean().nullable().optional(),
+});
 
 const refineDaySchema = z.object({
   day: num,
-  early_morning: blockSchema.nullable().optional(),
-  morning: blockSchema.nullable().optional(),
-  afternoon: blockSchema.nullable().optional(),
-  evening: blockSchema.nullable().optional(),
+  early_morning: refineBlockSchema.nullable().optional(),
+  morning: refineBlockSchema.nullable().optional(),
+  afternoon: refineBlockSchema.nullable().optional(),
+  evening: refineBlockSchema.nullable().optional(),
 });
 
 const refineSchema = z.object({
@@ -654,6 +667,23 @@ function normaliseRefine(value: unknown): unknown {
   if (v["stay_options"] == null && Array.isArray(v["stays"])) v["stay_options"] = v["stays"];
   if (v["budget_breakdown"] == null && v["budget"] && typeof v["budget"] === "object")
     v["budget_breakdown"] = v["budget"];
+  if (Array.isArray(v["itinerary_days"])) {
+    v["itinerary_days"] = (v["itinerary_days"] as unknown[]).map((d) => {
+      if (!d || typeof d !== "object") return d;
+      const day = { ...(d as Record<string, unknown>) };
+      for (const k of ["early_morning", "morning", "afternoon", "evening"]) {
+        const b = day[k];
+        if (Array.isArray(b)) day[k] = { stops: b }; // block given as a bare stops array
+        const block = day[k];
+        if (block && typeof block === "object" && Array.isArray((block as { stops?: unknown }).stops)) {
+          (block as { stops: unknown[] }).stops = (block as { stops: unknown[] }).stops.map((s) =>
+            typeof s === "string" ? { activity: s } : s, // stop given as a bare string
+          );
+        }
+      }
+      return day;
+    });
+  }
   if (!Array.isArray(v["changed"])) v["changed"] = [];
   if (typeof v["summary"] !== "string") v["summary"] = "";
   // Drop null/empty sections so optional() passes instead of min(1) failing.
@@ -711,7 +741,7 @@ export type RefinePatch = {
 
 export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePatch> {
   const scopeLine = data.scope.length
-    ? `Sections explicitly marked for change by the traveller: ${data.scope.join(", ")}. Change ONLY these (plus budget_breakdown if costs moved).`
+    ? `Sections explicitly marked for change by the traveller: ${data.scope.join(", ")} ("day:<n>" = itinerary day n, "stay" = stay_options, "budget" = budget_breakdown). Change ONLY these (plus budget_breakdown if costs moved) and return each of them in the patch.`
     : `No sections were explicitly marked — infer the narrowest scope from the request text and change nothing else.`;
 
   const context = toRefineContext(data.plan);
@@ -787,8 +817,12 @@ export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePa
     ...(patch.itineraryDays ?? []).map((d) => `day:${d.day}`),
   ]);
   patch.changed = patch.changed.filter((c) => delivered.has(c));
-  if (!patch.changed.length && !patch.summary) {
-    patch.summary = "Nothing changed — could you be more specific about what to adjust?";
+  if (!patch.changed.length) {
+    patch.summary =
+      patch.summary ||
+      (data.scope.length
+        ? `Couldn't work out how to change ${data.scope.join(", ")} — describe the change in a bit more detail.`
+        : "Nothing changed — could you be more specific about what to adjust?");
   }
   return patch;
 }
