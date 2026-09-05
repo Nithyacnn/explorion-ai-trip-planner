@@ -388,12 +388,11 @@ function Home() {
           </div>
         </div>
 
-        <div
-          className="relative"
-          onMouseEnter={() => setTripsOpen(true)}
-          onMouseLeave={() => setTripsOpen(false)}
-        >
+        <div className="relative" ref={tripsMenuRef}>
           <button
+            type="button"
+            aria-expanded={tripsOpen}
+            aria-haspopup="menu"
             onClick={() => setTripsOpen((v) => !v)}
             className="flex items-center gap-2 rounded-full border border-border px-3.5 py-2 text-xs text-muted-foreground transition hover:border-primary hover:text-primary"
           >
@@ -401,7 +400,7 @@ function Home() {
             <ChevronDown className="size-3" />
           </button>
           {tripsOpen ? (
-            <div className="panel-navy absolute right-0 z-40 mt-2 w-80 p-3">
+            <div role="menu" className="panel-navy absolute right-0 z-40 mt-2 w-80 p-3">
               {trips.length === 0 ? (
                 <p className="p-3 text-xs text-muted-foreground">
                   No saved trips yet — plan one and it appears here automatically.
