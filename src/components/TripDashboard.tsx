@@ -448,13 +448,20 @@ export function TripDashboard({
                                 {stops.length === 0 ? (
                                   <p className="text-sm leading-snug opacity-70">Free time</p>
                                 ) : (
-                                  stops.map((stop, si) => (
-                                    <div key={si}>
+                                  stops.map((stop, si) => {
+                                    const stopKey = `stop:${day.day}:${i}:${si}`;
+                                    const stopMarked = !!marks[stopKey];
+                                    return (
+                                    <div
+                                      key={si}
+                                      className={`rounded-md transition ${stopMarked ? "-mx-1.5 bg-primary/15 px-1.5 py-1 ring-1 ring-primary/50" : ""}`}
+                                    >
                                       {si > 0 && stop.travelTimeFromPrevious ? (
                                         <p className="mb-1 text-[10px] italic opacity-50">
                                           ↳ {stop.travelTimeFromPrevious}
                                         </p>
                                       ) : null}
+                                      <div className="flex items-start justify-between gap-2">
                                       <p className="text-sm leading-snug">
                                         {stop.activity}
                                         {stop.optional ? (
