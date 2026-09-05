@@ -361,9 +361,37 @@ function Home() {
       if (patch.budgetBreakdown) next.budgetBreakdown = patch.budgetBreakdown;
       if (patch.budgetTotal) next.budget = patch.budgetTotal;
       if (patch.itineraryDays?.length) {
+        // Days where only specific activities were marked: everything unmarked is locked client-side,
+        // regardless of what the model returned.
+        const lockedDays = new Set(
+          stops.map((s) => s.day).filter((d) => !markedKeys.includes(`day:${d}`)),
+        );
         next.itinerary = basePlan.itinerary.map((day) => {
           const replacement = patch.itineraryDays?.find((d) => d.day === day.day);
-          return replacement ? { ...day, slots: replacement.slots } : day;
+          if (!replacement) return day;
+          if (!lockedDays.has(day.day)) return { ...day, slots: replacement.slots };
+          const norm = (s: string) => s.trim().toLowerCase();
+          const slots = day.slots.map((slot, si) => {
+            const newSlot =
+              replacement.slots.find((s) => norm(s.label) === norm(slot.label)) ?? replacement.slots[si];
+            const keptStops = slot.stops.map((stop, i) => ({
+              stop,
+              changed: !!marks[`stop:${day.day}:${si}:${i}`],
+            }));
+            if (!keptStops.some((k) => k.changed)) return slot;
+            const originalTexts = new Set(slot.stops.map((s) => norm(s.activity)));
+            // Fresh stops = anything in the returned block that isn't one of the original activities.
+            const fresh = (newSlot?.stops ?? []).filter((s) => !originalTexts.has(norm(s.activity)));
+            let fi = 0;
+            const merged = keptStops.flatMap(({ stop, changed }) => {
+              if (!changed) return [stop];
+              const rep = fresh[fi++];
+              return rep ? [{ ...rep, travelTimeFromPrevious: rep.travelTimeFromPrevious ?? stop.travelTimeFromPrevious }] : [];
+            });
+            // Extra fresh stops the model added beyond the marked count are dropped to respect the lock.
+            return { ...slot, stops: merged.length ? merged : slot.stops };
+          });
+          return { ...day, slots };
         });
       }
       setPlan(next);
