@@ -141,9 +141,35 @@ function Home() {
   const askAi = useServerFn(generateTripPlan);
   const askRefine = useServerFn(refineTripPlan);
 
+  const tripsMenuRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     setTrips(loadSavedTrips());
   }, []);
+
+  // Close the My Trips menu on outside click / Escape (click-driven, no hover gaps).
+  useEffect(() => {
+    if (!tripsOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (!tripsMenuRef.current?.contains(e.target as Node)) setTripsOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setTripsOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [tripsOpen]);
+
+  const deleteSavedTrip = (id: string) => {
+    const next = removeSavedTrip(id);
+    setTrips(next);
+    if (currentId.current === id) currentId.current = undefined;
+    toast.success("Trip removed from My Trips");
+  };
 
   const persist = (next: TripPlan) => {
     try {
@@ -362,6 +388,12 @@ function Home() {
       setError(null);
       setRefineError(null);
       setAskingPreference(false);
+      toast.success(`Opened ${trip.plan.destination}`, {
+        description: "Edit any pill or type a change below the plan to refine it.",
+      });
+      requestAnimationFrame(() =>
+        document.getElementById("trip-dashboard")?.scrollIntoView({ behavior: "smooth" }),
+      );
     } catch (err) {
       console.error("[Explorion] saved trip failed to load:", trip.id, err);
       setError("This trip couldn't be loaded.");
@@ -388,12 +420,11 @@ function Home() {
           </div>
         </div>
 
-        <div
-          className="relative"
-          onMouseEnter={() => setTripsOpen(true)}
-          onMouseLeave={() => setTripsOpen(false)}
-        >
+        <div className="relative" ref={tripsMenuRef}>
           <button
+            type="button"
+            aria-expanded={tripsOpen}
+            aria-haspopup="menu"
             onClick={() => setTripsOpen((v) => !v)}
             className="flex items-center gap-2 rounded-full border border-border px-3.5 py-2 text-xs text-muted-foreground transition hover:border-primary hover:text-primary"
           >
@@ -401,7 +432,7 @@ function Home() {
             <ChevronDown className="size-3" />
           </button>
           {tripsOpen ? (
-            <div className="panel-navy absolute right-0 z-40 mt-2 w-80 p-3">
+            <div role="menu" className="panel-navy absolute right-0 z-40 mt-2 w-80 p-3">
               {trips.length === 0 ? (
                 <p className="p-3 text-xs text-muted-foreground">
                   No saved trips yet — plan one and it appears here automatically.
@@ -432,7 +463,11 @@ function Home() {
                         )}
                       </button>
                       <button
-                        onClick={() => setTrips(removeSavedTrip(trip.id))}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteSavedTrip(trip.id);
+                        }}
                         aria-label="Delete saved trip"
                         className="rounded-lg p-2 text-muted-foreground transition hover:text-primary"
                       >
@@ -712,7 +747,7 @@ function Home() {
             </div>
           </section>
         ) : plan ? (
-          <section className="border-t border-border pt-12">
+          <section id="trip-dashboard" className="border-t border-border pt-12">
             <p className="mb-6 text-sm text-muted-foreground">
               {plan.vibe ?? destinationVibe(plan.destination)}
               {plan.style ? ` · ${plan.style} style` : ""}
