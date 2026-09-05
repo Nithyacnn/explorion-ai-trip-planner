@@ -303,19 +303,37 @@ function Home() {
     setMarks((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const runRefine = async () => {
-    const request = refineText.trim();
+    let request = refineText.trim();
     const basePlan = planRef.current;
     if (!basePlan || refining) return;
-    const scope = Object.entries(marks)
+    const markedKeys = Object.entries(marks)
       .filter(([, v]) => v)
       .map(([k]) => k);
+    const scopeSet = new Set(markedKeys.filter((k) => !k.startsWith("stop:")));
+    // Individual activities marked "Change" → lock the rest of that day.
+    const stops: { day: number; block: string; activity: string }[] = [];
+    for (const key of markedKeys) {
+      if (!key.startsWith("stop:")) continue;
+      const [, d, s, i] = key.split(":").map(Number);
+      const day = basePlan.itinerary.find((x) => x.day === d);
+      const slot = day?.slots[s ?? -1];
+      const stop = slot?.stops[i ?? -1];
+      if (!day || !slot || !stop) continue;
+      stops.push({ day: day.day, block: slot.label, activity: stop.activity });
+      scopeSet.add(`day:${day.day}`);
+    }
+    const scope = [...scopeSet];
     if (!request && !scope.length) {
       setRefineError("What would you like to change?");
       return;
     }
     if (!request) {
-      setRefineError("Tell us what to change about the selected sections.");
-      return;
+      if (stops.length) {
+        request = "Replace the marked activities with better-fitting alternatives at the same time of day; keep everything else exactly as it is.";
+      } else {
+        setRefineError("Tell us what to change about the selected sections.");
+        return;
+      }
     }
     const requestId = ++refineSeq.current;
     setRefining(true);
@@ -324,7 +342,7 @@ function Home() {
     try {
       // Send the LATEST plan (never a stale closure) and strip debug-only fields.
       const { debugRaw: _debug, ...snapshot } = basePlan as TripPlan & { debugRaw?: unknown };
-      const patch = await askRefine({ data: { request, scope, plan: snapshot } });
+      const patch = await askRefine({ data: { request, scope, stops, plan: snapshot } });
       if (import.meta.env.DEV) console.log("[Explorion] refinement patch:", patch);
       // A newer refine or a fresh generation superseded this one — drop it.
       if (requestId !== refineSeq.current || planRef.current !== basePlan) return;
