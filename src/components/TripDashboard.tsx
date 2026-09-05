@@ -470,13 +470,30 @@ export function TripDashboard({
                                           </span>
                                         ) : null}
                                       </p>
+                                      <button
+                                        type="button"
+                                        onClick={() => onToggleMark(stopKey)}
+                                        aria-pressed={stopMarked}
+                                        aria-label={stopMarked ? `Keep ${stop.activity}` : `Change ${stop.activity}`}
+                                        title={stopMarked ? "Marked to change — click to keep" : "Change this activity"}
+                                        className={`mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide transition ${
+                                          stopMarked
+                                            ? "border-primary bg-primary text-primary-foreground"
+                                            : "border-current/20 opacity-50 hover:opacity-100"
+                                        }`}
+                                      >
+                                        {stopMarked ? <CircleDot className="size-2.5" /> : <Check className="size-2.5" />}
+                                        {stopMarked ? "Change" : "Keep"}
+                                      </button>
+                                      </div>
                                       {stop.why ? (
                                         <p className="mt-0.5 text-[11px] italic opacity-60">
                                           why: {stop.why}
                                         </p>
                                       ) : null}
                                     </div>
-                                  ))
+                                    );
+                                  })
                                 )}
                               </div>
                               <p className="mt-2 text-[11px] opacity-60">{slot.tag}</p>
