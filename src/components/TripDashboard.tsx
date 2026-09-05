@@ -34,6 +34,7 @@ import {
   type TripPlan,
 } from "@/lib/trip-planner";
 import { SectionBoundary } from "@/components/SectionBoundary";
+import { ShareTrip } from "@/components/ShareTrip";
 import { staySearchLink, transportSearchLink } from "@/lib/booking-links";
 
 const slotIcons = [Sunrise, Sun, Sunset, Moon];
@@ -119,6 +120,7 @@ export type DashboardProps = {
   selectedStay: number;
   onSelectStay: (index: number) => void;
   changeSummary?: string | null;
+  shareable?: boolean;
 };
 
 export function TripDashboard({
@@ -131,6 +133,7 @@ export function TripDashboard({
   selectedStay,
   onSelectStay,
   changeSummary,
+  shareable = true,
 }: DashboardProps) {
   const [booking, setBooking] = useState<string | null>(null);
   const [booked, setBooked] = useState(false);
