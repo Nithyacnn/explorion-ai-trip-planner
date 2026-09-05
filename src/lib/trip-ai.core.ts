@@ -544,6 +544,10 @@ const currentPlanSchema = z.object({
 const RefineInput = z.object({
   request: z.string().min(1),
   scope: z.array(z.string()).default([]),
+  /** Individual activities the traveller marked for change (everything else in that day is locked). */
+  stops: z
+    .array(z.object({ day: z.number(), block: z.string(), activity: z.string() }))
+    .default([]),
   plan: currentPlanSchema,
 });
 
