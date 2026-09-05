@@ -7,8 +7,8 @@ const GOLD: [number, number, number] = [166, 130, 30];
 const INK: [number, number, number] = [40, 44, 58];
 const MUTED: [number, number, number] = [110, 116, 132];
 
-/** Build and download a printable PDF of the trip plan. */
-export async function downloadTripPdf(plan: TripPlan) {
+/** Build a printable PDF document of the trip plan. */
+export async function buildTripPdf(plan: TripPlan) {
   const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ unit: "pt", format: "a4" });
 
@@ -171,5 +171,11 @@ export async function downloadTripPdf(plan: TripPlan) {
   }
 
   const slug = `${plan.destination}-${plan.days}-days`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  doc.save(`explorion-${slug || "trip"}.pdf`);
+  return { doc, filename: `explorion-${slug || "trip"}.pdf` };
+}
+
+/** Build and download a printable PDF of the trip plan. */
+export async function downloadTripPdf(plan: TripPlan) {
+  const { doc, filename } = await buildTripPdf(plan);
+  doc.save(filename);
 }
