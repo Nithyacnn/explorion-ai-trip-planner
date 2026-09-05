@@ -177,5 +177,18 @@ export async function buildTripPdf(plan: TripPlan) {
 /** Build and download a printable PDF of the trip plan. */
 export async function downloadTripPdf(plan: TripPlan) {
   const { doc, filename } = await buildTripPdf(plan);
-  doc.save(filename);
+  // Explicit blob download — more reliable than jsPDF's save() inside
+  // sandboxed iframes (e.g. the app preview), where the built-in anchor
+  // click can be swallowed silently.
+  const blob = doc.output("blob");
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  // Revoke after the browser has had time to start the download.
+  window.setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
