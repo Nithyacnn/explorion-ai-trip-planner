@@ -141,9 +141,35 @@ function Home() {
   const askAi = useServerFn(generateTripPlan);
   const askRefine = useServerFn(refineTripPlan);
 
+  const tripsMenuRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     setTrips(loadSavedTrips());
   }, []);
+
+  // Close the My Trips menu on outside click / Escape (click-driven, no hover gaps).
+  useEffect(() => {
+    if (!tripsOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (!tripsMenuRef.current?.contains(e.target as Node)) setTripsOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setTripsOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [tripsOpen]);
+
+  const deleteSavedTrip = (id: string) => {
+    const next = removeSavedTrip(id);
+    setTrips(next);
+    if (currentId.current === id) currentId.current = undefined;
+    toast.success("Trip removed from My Trips");
+  };
 
   const persist = (next: TripPlan) => {
     try {
