@@ -457,7 +457,11 @@ function Home() {
                         )}
                       </button>
                       <button
-                        onClick={() => setTrips(removeSavedTrip(trip.id))}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteSavedTrip(trip.id);
+                        }}
                         aria-label="Delete saved trip"
                         className="rounded-lg p-2 text-muted-foreground transition hover:text-primary"
                       >
