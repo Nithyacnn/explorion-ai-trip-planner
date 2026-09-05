@@ -388,6 +388,13 @@ function Home() {
       setError(null);
       setRefineError(null);
       setAskingPreference(false);
+      setPrompt(trip.plan.prompt ?? "");
+      toast.success(`Opened ${trip.plan.destination}`, {
+        description: "Edit any pill or type a change below the plan to refine it.",
+      });
+      requestAnimationFrame(() =>
+        document.getElementById("trip-dashboard")?.scrollIntoView({ behavior: "smooth" }),
+      );
     } catch (err) {
       console.error("[Explorion] saved trip failed to load:", trip.id, err);
       setError("This trip couldn't be loaded.");
