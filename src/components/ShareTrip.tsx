@@ -34,9 +34,8 @@ export function ShareTrip({ plan }: { plan: TripPlan }) {
     try {
       const url = await buildShareUrl(plan);
       if (kind === "link") {
-        toast[(await copy(url)) ? "success" : "error"](
-          (await copy(url)) ? "Link copied — paste it anywhere" : "Couldn't copy the link",
-        );
+        const ok = await copy(url);
+        toast[ok ? "success" : "error"](ok ? "Link copied — paste it anywhere" : "Couldn't copy the link");
       } else if (kind === "text") {
         const ok = await copy(`${buildShareText(plan)}\n\n${url}`);
         toast[ok ? "success" : "error"](ok ? "Itinerary copied" : "Couldn't copy the itinerary");
