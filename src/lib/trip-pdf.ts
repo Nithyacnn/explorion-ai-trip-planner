@@ -189,14 +189,6 @@ export async function downloadTripPdf(plan: TripPlan) {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  // Fallback: if the download attribute was ignored (nothing saved),
-  // open the PDF in a new tab so the user can save it from there.
-  window.setTimeout(() => {
-    try {
-      window.open(url, "_blank", "noopener");
-    } catch {
-      /* popup blocked — the download above is the primary path */
-    }
-    URL.revokeObjectURL(url);
-  }, 4000);
+  // Revoke after the browser has had time to start the download.
+  window.setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
