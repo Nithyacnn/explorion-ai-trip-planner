@@ -464,76 +464,98 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
 
 /* ---------------- Refinement ---------------- */
 
-// The CURRENT plan as the client holds it. Validated loosely so a malformed or stale
-// client payload fails fast with a clear error instead of reaching the model.
+const num = z.coerce.number();
+
+// The CURRENT plan as the client holds it. Validated leniently (older saved trips may be
+// missing newer fields) so a stale payload still refines instead of failing on a type nit.
+const optStr = z.string().nullable().optional();
 const currentPlanSchema = z.object({
   destination: z.string(),
-  origin: z.string().nullable().optional(),
+  origin: optStr,
   travelerCount: z.number().nullable().optional(),
   travelDates: z
-    .object({ startDate: z.string().nullable(), endDate: z.string().nullable() })
+    .object({ startDate: optStr, endDate: optStr })
     .nullable()
     .optional(),
-  days: z.number(),
-  budget: z.number(),
-  month: z.string().optional(),
-  style: z.string().optional(),
-  tripPreference: z.string().optional(),
-  international: z.boolean().optional(),
-  transport: z.object({
-    modes: z.array(
-      z.object({
-        mode: z.string(),
-        min: z.number(),
-        max: z.number(),
-        duration: z.string(),
-        notes: z.string(),
-      }),
-    ),
-    recommendedMode: z.string(),
-    recommendedReason: z.string(),
-  }),
+  days: num,
+  budget: num.default(0),
+  month: optStr,
+  style: optStr,
+  tripPreference: optStr,
+  international: z.boolean().nullable().optional(),
+  transport: z
+    .object({
+      modes: z
+        .array(
+          z.object({
+            mode: z.string(),
+            min: num.default(0),
+            max: num.default(0),
+            duration: z.string().default(""),
+            notes: z.string().default(""),
+          }),
+        )
+        .default([]),
+      recommendedMode: z.string().default(""),
+      recommendedReason: z.string().default(""),
+    })
+    .default({ modes: [], recommendedMode: "", recommendedReason: "" }),
   itinerary: z.array(
     z.object({
-      day: z.number(),
-      title: z.string().optional(),
-      slots: z.array(
-        z.object({
-          label: z.string(),
-          tag: z.string(),
-          overpacked: z.boolean().optional(),
-          stops: z.array(
-            z.object({
-              activity: z.string(),
-              why: z.string().optional(),
-              travelTimeFromPrevious: z.string().optional(),
-              optional: z.boolean().optional(),
-            }),
-          ),
-        }),
-      ),
+      day: num,
+      title: optStr,
+      slots: z
+        .array(
+          z.object({
+            label: z.string().default(""),
+            tag: z.string().default(""),
+            overpacked: z.boolean().nullable().optional(),
+            stops: z
+              .array(
+                z.object({
+                  activity: z.string(),
+                  why: optStr,
+                  travelTimeFromPrevious: optStr,
+                  optional: z.boolean().nullable().optional(),
+                }),
+              )
+              .default([]),
+          }),
+        )
+        .default([]),
     }),
   ),
-  budgetBreakdown: z.array(z.object({ label: z.string(), amount: z.number(), pct: z.number() })),
-  stayOptions: z.array(
-    z.object({
-      name: z.string(),
-      type: z.string(),
-      pricePerNight: z.number(),
-      rating: z.number(),
-      why: z.string(),
-    }),
-  ),
+  budgetBreakdown: z
+    .array(z.object({ label: z.string(), amount: num.default(0), pct: num.default(0) }))
+    .default([]),
+  stayOptions: z
+    .array(
+      z.object({
+        name: z.string(),
+        type: z.string().default(""),
+        pricePerNight: num.default(0),
+        rating: num.default(0),
+        why: z.string().default(""),
+      }),
+    )
+    .default([]),
 });
 
 const RefineInput = z.object({
   request: z.string().min(1),
-  scope: z.array(z.string()),
+  scope: z.array(z.string()).default([]),
   plan: currentPlanSchema,
 });
 
 export type RefineInputType = z.infer<typeof RefineInput>;
-export const parseRefineInput = (input: unknown): RefineInputType => RefineInput.parse(input);
+export const parseRefineInput = (input: unknown): RefineInputType => {
+  const parsed = RefineInput.safeParse(input);
+  if (parsed.success) return parsed.data;
+  console.error("[Explorion] refine input rejected:", parsed.error.message);
+  throw new Error(
+    "This trip is in an older format and can't be refined — generate it again first.",
+  );
+};
 
 /** Re-express the client's camelCase plan in the exact snake_case shape the model must emit. */
 function toRefineContext(p: z.infer<typeof currentPlanSchema>) {
@@ -598,14 +620,25 @@ function toRefineContext(p: z.infer<typeof currentPlanSchema>) {
   };
 }
 
-const num = z.coerce.number();
+const refineStopSchema = z.object({
+  activity: z.string(),
+  why: z.string().nullable().optional(),
+  travel_time_from_previous: z.string().nullable().optional(),
+  optional: z.boolean().nullable().optional(),
+});
+
+const refineBlockSchema = z.object({
+  stops: z.array(refineStopSchema).default([]),
+  time_range: z.string().nullable().optional(),
+  overpacked: z.boolean().nullable().optional(),
+});
 
 const refineDaySchema = z.object({
   day: num,
-  early_morning: blockSchema.nullable().optional(),
-  morning: blockSchema.nullable().optional(),
-  afternoon: blockSchema.nullable().optional(),
-  evening: blockSchema.nullable().optional(),
+  early_morning: refineBlockSchema.nullable().optional(),
+  morning: refineBlockSchema.nullable().optional(),
+  afternoon: refineBlockSchema.nullable().optional(),
+  evening: refineBlockSchema.nullable().optional(),
 });
 
 const refineSchema = z.object({
@@ -634,6 +667,23 @@ function normaliseRefine(value: unknown): unknown {
   if (v["stay_options"] == null && Array.isArray(v["stays"])) v["stay_options"] = v["stays"];
   if (v["budget_breakdown"] == null && v["budget"] && typeof v["budget"] === "object")
     v["budget_breakdown"] = v["budget"];
+  if (Array.isArray(v["itinerary_days"])) {
+    v["itinerary_days"] = (v["itinerary_days"] as unknown[]).map((d) => {
+      if (!d || typeof d !== "object") return d;
+      const day = { ...(d as Record<string, unknown>) };
+      for (const k of ["early_morning", "morning", "afternoon", "evening"]) {
+        const b = day[k];
+        if (Array.isArray(b)) day[k] = { stops: b }; // block given as a bare stops array
+        const block = day[k];
+        if (block && typeof block === "object" && Array.isArray((block as { stops?: unknown }).stops)) {
+          (block as { stops: unknown[] }).stops = (block as { stops: unknown[] }).stops.map((s) =>
+            typeof s === "string" ? { activity: s } : s, // stop given as a bare string
+          );
+        }
+      }
+      return day;
+    });
+  }
   if (!Array.isArray(v["changed"])) v["changed"] = [];
   if (typeof v["summary"] !== "string") v["summary"] = "";
   // Drop null/empty sections so optional() passes instead of min(1) failing.
@@ -691,7 +741,7 @@ export type RefinePatch = {
 
 export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePatch> {
   const scopeLine = data.scope.length
-    ? `Sections explicitly marked for change by the traveller: ${data.scope.join(", ")}. Change ONLY these (plus budget_breakdown if costs moved).`
+    ? `Sections explicitly marked for change by the traveller: ${data.scope.join(", ")} ("day:<n>" = itinerary day n, "stay" = stay_options, "budget" = budget_breakdown). Change ONLY these (plus budget_breakdown if costs moved) and return each of them in the patch.`
     : `No sections were explicitly marked — infer the narrowest scope from the request text and change nothing else.`;
 
   const context = toRefineContext(data.plan);
@@ -767,8 +817,12 @@ export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePa
     ...(patch.itineraryDays ?? []).map((d) => `day:${d.day}`),
   ]);
   patch.changed = patch.changed.filter((c) => delivered.has(c));
-  if (!patch.changed.length && !patch.summary) {
-    patch.summary = "Nothing changed — could you be more specific about what to adjust?";
+  if (!patch.changed.length) {
+    patch.summary =
+      patch.summary ||
+      (data.scope.length
+        ? `Couldn't work out how to change ${data.scope.join(", ")} — describe the change in a bit more detail.`
+        : "Nothing changed — could you be more specific about what to adjust?");
   }
   return patch;
 }
