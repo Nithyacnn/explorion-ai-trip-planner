@@ -748,7 +748,7 @@ function Home() {
             </div>
           </section>
         ) : plan ? (
-          <section className="border-t border-border pt-12">
+          <section id="trip-dashboard" className="border-t border-border pt-12">
             <p className="mb-6 text-sm text-muted-foreground">
               {plan.vibe ?? destinationVibe(plan.destination)}
               {plan.style ? ` · ${plan.style} style` : ""}
