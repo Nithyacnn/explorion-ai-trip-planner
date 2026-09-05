@@ -786,7 +786,7 @@ function Home() {
               <div>
                 <h3 className="font-display text-xl text-foreground">Refine your trip</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Mark sections as “Change” above, or just describe what to adjust — the
+                  Mark whole sections or single activities as “Change” above, then describe what you want (or leave it blank to get fresh alternatives) — the
                   rest stays exactly as it is.
                 </p>
               </div>
