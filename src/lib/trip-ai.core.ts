@@ -744,9 +744,16 @@ export type RefinePatch = {
 };
 
 export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePatch> {
-  const scopeLine = data.scope.length
-    ? `Sections explicitly marked for change by the traveller: ${data.scope.join(", ")} ("day:<n>" = itinerary day n, "stay" = stay_options, "budget" = budget_breakdown). Change ONLY these (plus budget_breakdown if costs moved) and return each of them in the patch.`
-    : `No sections were explicitly marked — infer the narrowest scope from the request text and change nothing else.`;
+  const stopScope = data.stops.length
+    ? `\nACTIVITY-LEVEL SCOPE — the traveller marked ONLY these specific activities for change:\n${data.stops
+        .map((s) => `- Day ${s.day}, ${s.block}: "${s.activity}"`)
+        .join("\n")}\nFor each of those days: replace/adjust ONLY the listed activities (respecting the change request), keep EVERY other stop in that day word-for-word in its original block and order, then return the full day. Do not touch any day not listed here unless it is also in the section scope.`
+    : "";
+  const scopeLine =
+    (data.scope.length
+      ? `Sections explicitly marked for change by the traveller: ${data.scope.join(", ")} ("day:<n>" = itinerary day n, "stay" = stay_options, "budget" = budget_breakdown). Change ONLY these (plus budget_breakdown if costs moved) and return each of them in the patch.`
+      : `No sections were explicitly marked — infer the narrowest scope from the request text and change nothing else.`) +
+    stopScope;
 
   const context = toRefineContext(data.plan);
   const text = await callAi(
