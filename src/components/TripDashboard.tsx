@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Plane,
   TrainFront,
@@ -136,12 +136,13 @@ export function TripDashboard({
   shareable = true,
 }: DashboardProps) {
   const [booking, setBooking] = useState<string | null>(null);
-  const [booked, setBooked] = useState(false);
 
   const modes = Array.isArray(plan.transport?.modes) ? plan.transport.modes : [];
   const stays: Stay[] = Array.isArray(plan.stayOptions) ? plan.stayOptions : [];
   const days = Array.isArray(plan.itinerary) ? plan.itinerary : [];
-  const stay = stays[Math.min(selectedStay, Math.max(stays.length - 1, 0))];
+  const stayIndex = Math.min(Math.max(0, selectedStay), Math.max(stays.length - 1, 0));
+  const stay = stays[stayIndex];
+  const visaStatus = plan.visa ? VISA_STATUS[plan.visa.type] ?? VISA_STATUS.advance_visa : null;
 
   const breakdown = useMemo(() => {
     const base = Array.isArray(plan.budgetBreakdown) ? plan.budgetBreakdown : [];
@@ -160,21 +161,29 @@ export function TripDashboard({
     return items.map((b) => ({ ...b, pct: Math.round((b.amount / total) * 100) }));
   }, [plan.budgetBreakdown, plan.days, plan.international, plan.visa, stay]);
 
-  const total = breakdown.reduce((s, b) => s + b.amount, 0) || plan.budget;
+  const total = breakdown.reduce((s, b) => s + b.amount, 0) || plan.budget || 0;
   const travelers = isValidTravelerCount(plan.travelerCount) ? plan.travelerCount : null;
   const budgetOk = travelers !== null;
   const maxPct = Math.max(1, ...breakdown.map((b) => b.pct));
 
+  // Close the demo-booking dialog on Escape.
+  useEffect(() => {
+    if (!booking) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setBooking(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [booking]);
+
   const startBooking = () => {
-    if (booked) return;
-    setBooked(true);
+    if (booking) return;
     setBooking(
-      `EXP-${plan.destination.slice(0, 3).toUpperCase()}-${Math.random()
+      `EXP-${plan.destination.replace(/[^a-z]/gi, "").slice(0, 3).toUpperCase() || "TRP"}-${Math.random()
         .toString(36)
         .slice(2, 8)
         .toUpperCase()}`,
     );
-    window.setTimeout(() => setBooked(false), 1500);
   };
 
   return (
@@ -237,7 +246,7 @@ export function TripDashboard({
         <div className="space-y-2">
           <p className="text-xs uppercase tracking-[0.35em] text-primary">Your plan</p>
           <h2 className="font-display text-4xl text-foreground sm:text-5xl">
-            {plan.days} days in {plan.destination}
+            {plan.days} {plan.days === 1 ? "day" : "days"} in {plan.destination}
           </h2>
           <p className="text-sm text-muted-foreground">
             {plan.origin ? `${plan.origin} → ${plan.destination} · ` : ""}
@@ -252,7 +261,7 @@ export function TripDashboard({
           {shareable === false ? null : <ShareTrip plan={plan} />}
           <button
             onClick={startBooking}
-            disabled={booked}
+            disabled={!!booking}
             className="brass-glow inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
           >
             <Ticket className="size-4" /> Book this trip
@@ -353,14 +362,14 @@ export function TripDashboard({
                 <>
                   <span
                     className={`mt-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wider ${
-                      VISA_STATUS[plan.visa.type].tone === "ok"
+                      visaStatus?.tone === "ok"
                         ? "bg-emerald-500/20 text-emerald-700"
-                        : VISA_STATUS[plan.visa.type].tone === "warn"
+                        : visaStatus?.tone === "warn"
                           ? "bg-amber-500/20 text-amber-700"
                           : "bg-red-500/20 text-red-700"
                     }`}
                   >
-                    <BadgeCheck className="size-3" /> {VISA_STATUS[plan.visa.type].label}
+                    <BadgeCheck className="size-3" /> {visaStatus?.label}
                   </span>
 
                   {plan.visa.type === "advance_visa" || plan.visa.type === "e_visa" ? (
@@ -542,7 +551,7 @@ export function TripDashboard({
           ) : (
             <div className="mt-4 grid gap-4 sm:grid-cols-3">
               {stays.map((option, i) => {
-                const active = option === stay;
+                const active = i === stayIndex;
                 const link = staySearchLink(option.name, plan.destination, plan.month);
                 return (
                   <div
@@ -559,7 +568,7 @@ export function TripDashboard({
                       <div className="flex items-start justify-between gap-2">
                         <p className="text-sm font-semibold">{option.name}</p>
                         <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-[11px] font-semibold tabular-nums">
-                          <Star className="size-3" /> {option.rating.toFixed(1)}
+                          <Star className="size-3" /> {Number(option.rating ?? 0).toFixed(1)}
                         </span>
                       </div>
                       <p className="mt-0.5 text-xs uppercase tracking-wider opacity-70">
@@ -675,7 +684,7 @@ export function TripDashboard({
               Booking reference · {booking}
             </p>
             <p className="mt-3 text-xs opacity-70">
-              We&apos;ll keep monitoring this trip and flag changes to fares and stays.
+              Prices and availability change daily — check the provider before you pay.
             </p>
           </div>
         </div>

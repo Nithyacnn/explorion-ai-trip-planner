@@ -3,19 +3,29 @@ import { z } from "zod";
 import { extractJson } from "@/lib/json-extract";
 import { MODE_LABELS, type TripPlan, type TransportModeId } from "@/lib/trip-planner";
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_DAYS = 31;
+const MAX_TRAVELERS = 50;
+const isoDate = z.string().regex(ISO_DATE, "Expected YYYY-MM-DD");
+
+// Bounded, so an abusive client can't ship megabytes into the model prompt.
 const Input = z.object({
-  prompt: z.string(),
-  origin: z.string().nullable().optional(),
-  travelerCount: z.number().nullable().optional(),
-  preference: z.string().nullable().optional(),
-  startDate: z.string().nullable().optional(),
-  endDate: z.string().nullable().optional(),
+  prompt: z.string().trim().min(1).max(2000),
+  origin: z.string().trim().max(80).nullable().optional(),
+  travelerCount: z.number().finite().min(1).max(MAX_TRAVELERS).nullable().optional(),
+  preference: z.string().trim().max(600).nullable().optional(),
+  startDate: isoDate.nullable().optional(),
+  endDate: isoDate.nullable().optional(),
+  /** Client's local calendar date — the server clock may be in a different timezone. */
+  today: isoDate.nullable().optional(),
 });
+
+const money = z.number().finite();
 
 const modeSchema = z.object({
   mode: z.enum(["flight", "train", "bus", "own_vehicle"]),
-  low: z.number(),
-  high: z.number(),
+  low: money,
+  high: money,
   duration: z.string(),
   notes: z.string(),
 });
@@ -28,13 +38,13 @@ const stopSchema = z.object({
 });
 
 const blockSchema = z.object({
-  stops: z.array(stopSchema),
+  stops: z.array(stopSchema).max(20),
   time_range: z.string().nullable().optional(),
   overpacked: z.boolean().nullable().optional(),
 });
 
 const daySchema = z.object({
-  day: z.number(),
+  day: z.number().finite(),
   early_morning: blockSchema.nullable().optional(),
   morning: blockSchema,
   afternoon: blockSchema,
@@ -44,16 +54,16 @@ const daySchema = z.object({
 const stayOptionSchema = z.object({
   name: z.string(),
   type: z.string(),
-  price_per_night: z.number(),
-  rating: z.number(),
+  price_per_night: money,
+  rating: money,
   why: z.string(),
 });
 
 const breakdownSchema = z.object({
-  stay: z.number(),
-  transit: z.number(),
-  meals: z.number(),
-  activities: z.number(),
+  stay: money,
+  transit: money,
+  meals: money,
+  activities: money,
 });
 
 const visaSchema = z.object({
@@ -87,18 +97,18 @@ const planSchema = z.object({
   international: z.boolean().nullable().optional(),
   visa: visaSchema.nullable().optional(),
   trip_preference: z.string(),
-  duration_days: z.number(),
-  budget_total: z.number(),
+  duration_days: z.number().finite(),
+  budget_total: z.number().finite(),
   month: z.string(),
   style: z.string(),
   vibe: z.string(),
   transport: z.object({
-    available_modes: z.array(modeSchema).min(1),
+    available_modes: z.array(modeSchema).min(1).max(8),
     recommended_mode: z.string(),
     recommended_reason: z.string(),
   }),
-  stay_options: z.array(stayOptionSchema).min(1),
-  itinerary: z.array(daySchema).min(1),
+  stay_options: z.array(stayOptionSchema).min(1).max(6),
+  itinerary: z.array(daySchema).min(1).max(MAX_DAYS + 5),
   budget_breakdown: breakdownSchema,
   agent_labels: z.object({
     transport: z.string(),
@@ -267,7 +277,7 @@ async function parseWithRepair<T extends z.ZodTypeAny>(
   );
   const second = schema.safeParse(normalise(extractJson(repaired)));
   if (second.success) return second.data;
-  console.error(`[Explorion] ${tag} JSON still invalid after repair:`, second.error.message, repaired);
+  console.error(`[Explorion] ${tag} JSON still invalid after repair:`, second.error.message.slice(0, 2000), repaired.slice(0, 2000));
   throw new Error("The AI returned an unreadable answer — please try again.");
 }
 
@@ -328,14 +338,28 @@ function toBreakdown(bb: z.infer<typeof breakdownSchema>, fallbackTotal: number)
 }
 
 function toModes(modes: z.infer<typeof modeSchema>[]) {
-  return modes.map((m) => ({
-    mode: m.mode as TransportModeId,
-    label: MODE_LABELS[m.mode as TransportModeId] ?? m.mode,
-    min: Math.round(m.low),
-    max: Math.round(m.high),
-    duration: m.duration,
-    notes: m.notes,
-  }));
+  const seen = new Set<string>();
+  return modes
+    .filter((m) => (seen.has(m.mode) ? false : (seen.add(m.mode), true))) // one card per mode
+    .map((m) => {
+      const a = Math.max(0, Math.round(m.low));
+      const b = Math.max(0, Math.round(m.high));
+      return {
+        mode: m.mode as TransportModeId,
+        label: MODE_LABELS[m.mode as TransportModeId] ?? m.mode,
+        min: Math.min(a, b),
+        max: Math.max(a, b),
+        duration: m.duration,
+        notes: m.notes,
+      };
+    });
+}
+
+/** The model must recommend a mode it actually returned; otherwise fall back to the cheapest. */
+function pickRecommended(modes: { mode: string; min: number }[], recommended: string) {
+  const wanted = recommended.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (modes.some((m) => m.mode === wanted)) return wanted;
+  return [...modes].sort((a, b) => a.min - b.min)[0]?.mode ?? recommended;
 }
 
 function toVisa(v: z.infer<typeof visaSchema> | null | undefined) {
@@ -358,15 +382,36 @@ function toStays(options: z.infer<typeof stayOptionSchema>[]) {
     .map((s) => ({
       name: s.name,
       type: s.type,
-      pricePerNight: Math.round(s.price_per_night),
+      pricePerNight: Math.max(0, Math.round(s.price_per_night)),
       rating: Math.round(Math.min(5, Math.max(0, s.rating)) * 10) / 10,
       why: s.why,
     }))
     .sort((a, b) => b.rating - a.rating);
 }
 
+/** Inclusive day count between two ISO dates, or null when either is missing/invalid. */
+function daysBetween(start: string | null, end: string | null): number | null {
+  if (!start || !end) return null;
+  const a = Date.parse(`${start}T00:00:00Z`);
+  const b = Date.parse(`${end}T00:00:00Z`);
+  if (Number.isNaN(a) || Number.isNaN(b) || b < a) return null;
+  return Math.round((b - a) / 86_400_000) + 1;
+}
+
+const fillerDay = (): z.infer<typeof daySchema> => ({
+  day: 0,
+  morning: { stops: [] },
+  afternoon: { stops: [] },
+  evening: { stops: [] },
+});
+
 export type GenerateInput = z.infer<typeof Input>;
-export const parseGenerateInput = (input: unknown): GenerateInput => Input.parse(input);
+export const parseGenerateInput = (input: unknown): GenerateInput => {
+  const parsed = Input.safeParse(input);
+  if (parsed.success) return parsed.data;
+  console.error("[Explorion] generate input rejected:", parsed.error.message);
+  throw new Error("Please shorten your trip description or check the dates and traveller count.");
+};
 
 export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan> {
     const originLine = data.origin
@@ -383,11 +428,19 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
       ? `\nTrip preference (free text, shape the whole plan around it): ${preference}`
       : `\nThe traveller skipped the preference question — use a balanced default plan and return "trip_preference": "".`;
 
-    const today = new Date().toISOString().slice(0, 10);
-    const startDate = data.startDate?.trim() || "";
-    const endDate = data.endDate?.trim() || "";
+    // Prefer the traveller's local calendar date; the server clock may sit in another timezone.
+    const today = data.today?.trim() || new Date().toISOString().slice(0, 10);
+    let startDate = data.startDate?.trim() || "";
+    let endDate = data.endDate?.trim() || "";
+    if (startDate && endDate && endDate < startDate) [startDate, endDate] = [endDate, startDate];
+    if (!startDate) endDate = "";
+    const suppliedSpan = daysBetween(startDate || null, endDate || null);
     const datesLine = startDate
-      ? `\nConfirmed travel dates: start ${startDate}${endDate ? `, end ${endDate}` : " (derive the end date from duration_days)"}. Use them as travel_dates and set needs_dates to false.`
+      ? `\nConfirmed travel dates: start ${startDate}${
+          endDate
+            ? `, end ${endDate} (that is ${suppliedSpan} days — duration_days MUST equal ${suppliedSpan})`
+            : " (derive the end date from duration_days)"
+        }. Use them as travel_dates and set needs_dates to false.`
       : "";
 
     const text = await callAi(
@@ -399,36 +452,48 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
     const raw = await parseWithRepair(planSchema, text, "plan");
 
     const origin = data.origin?.trim() || raw.origin?.trim() || null;
-    const suppliedCount =
-      typeof data.travelerCount === "number" && data.travelerCount >= 1
-        ? Math.round(data.travelerCount)
+    const validCount = (v: unknown) =>
+      typeof v === "number" && Number.isFinite(v) && v >= 1
+        ? Math.min(MAX_TRAVELERS, Math.round(v))
         : null;
-    const rawCount =
-      typeof raw.traveler_count === "number" && raw.traveler_count >= 1
-        ? Math.round(raw.traveler_count)
-        : null;
-    const travelerCount = suppliedCount ?? rawCount;
+    const travelerCount = validCount(data.travelerCount) ?? validCount(raw.traveler_count);
     const isDate = (v: unknown): v is string =>
-      typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.trim());
-    const startDateOut = isDate(data.startDate)
-      ? data.startDate.trim()
-      : isDate(raw.travel_dates?.start_date)
-        ? raw.travel_dates!.start_date!.trim()
-        : null;
-    const endDateOut = isDate(data.endDate)
-      ? data.endDate.trim()
-      : isDate(raw.travel_dates?.end_date)
-        ? raw.travel_dates!.end_date!.trim()
-        : null;
+      typeof v === "string" && ISO_DATE.test(v.trim());
+    let startDateOut = startDate || (isDate(raw.travel_dates?.start_date) ? raw.travel_dates!.start_date!.trim() : null);
+    let endDateOut = endDate || (isDate(raw.travel_dates?.end_date) ? raw.travel_dates!.end_date!.trim() : null);
+    if (startDateOut && endDateOut && endDateOut < startDateOut)
+      [startDateOut, endDateOut] = [endDateOut, startDateOut];
+    if (!startDateOut) endDateOut = null;
+
     const international = origin ? raw.international === true : false;
     const visa = international ? toVisa(raw.visa) : null;
-    const days = Math.max(1, Math.round(raw.duration_days || raw.itinerary.length || 3));
-    const itinerary = raw.itinerary
-      .slice(0, days)
-      .map((d, i) => toDay(d, i, days, raw.destination));
+
+    // Trip length: explicit user dates win, then the model's duration, then the itinerary length.
+    const days = Math.min(
+      MAX_DAYS,
+      Math.max(1, suppliedSpan ?? Math.round(raw.duration_days || raw.itinerary.length || 3)),
+    );
+    // Keep the model's own day order, drop duplicates, pad short itineraries with light days.
+    const seenDays = new Set<number>();
+    const ordered = raw.itinerary
+      .map((d, i) => ({ d, n: Number.isFinite(d.day) ? Math.round(d.day) : i + 1, i }))
+      .sort((a, b) => a.n - b.n || a.i - b.i)
+      .filter(({ n }) => (seenDays.has(n) ? false : (seenDays.add(n), true)))
+      .map(({ d }) => d)
+      .slice(0, days);
+    while (ordered.length < days) ordered.push(fillerDay());
+    const itinerary = ordered.map((d, i) => toDay(d, i, days, raw.destination));
+
+    // Derive an end date from the start when the model didn't give one.
+    if (startDateOut && !endDateOut) {
+      const t = Date.parse(`${startDateOut}T00:00:00Z`);
+      if (!Number.isNaN(t)) endDateOut = new Date(t + (days - 1) * 86_400_000).toISOString().slice(0, 10);
+    }
+
+    const modes = toModes(raw.transport.available_modes);
 
     return {
-      destination: raw.destination,
+      destination: raw.destination.trim() || "Your destination",
       origin,
       needsOrigin: !origin,
       travelerCount,
@@ -439,11 +504,11 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
       visa,
       visaUnavailable: international && !visa,
       days,
-      budget: Math.round(raw.budget_total || 0),
-      month: raw.month || "Anytime",
+      budget: Math.max(0, Math.round(raw.budget_total || 0)),
+      month: raw.month?.trim() || "Anytime",
       transport: {
-        modes: toModes(raw.transport.available_modes),
-        recommendedMode: raw.transport.recommended_mode,
+        modes,
+        recommendedMode: pickRecommended(modes, raw.transport.recommended_mode),
         recommendedReason: raw.transport.recommended_reason,
       },
       itinerary,
@@ -458,8 +523,8 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
       tripPreference: preference || raw.trip_preference?.trim() || "",
       style: raw.style,
       vibe: raw.vibe,
-    debugRaw: text,
-  };
+      debugRaw: text,
+    };
 }
 
 /* ---------------- Refinement ---------------- */
@@ -542,13 +607,19 @@ const currentPlanSchema = z.object({
 });
 
 const RefineInput = z.object({
-  request: z.string().min(1),
-  scope: z.array(z.string()).default([]),
+  request: z.string().trim().min(1).max(2000),
+  scope: z.array(z.string().max(40)).max(64).default([]),
   /** Individual activities the traveller marked for change (everything else in that day is locked). */
   stops: z
-    .array(z.object({ day: z.number(), block: z.string(), activity: z.string() }))
+    .array(z.object({ day: z.number(), block: z.string().max(40), activity: z.string().max(600) }))
+    .max(200)
     .default([]),
-  plan: currentPlanSchema,
+  plan: currentPlanSchema.superRefine((p, ctx) => {
+    if (p.itinerary.length > MAX_DAYS)
+      ctx.addIssue({ code: "custom", message: "Too many itinerary days" });
+    if (p.itinerary.some((d) => d.slots.some((s) => s.stops.length > 40)))
+      ctx.addIssue({ code: "custom", message: "Too many stops" });
+  }),
 });
 
 export type RefineInputType = z.infer<typeof RefineInput>;
@@ -771,9 +842,10 @@ export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePa
   };
 
   if (raw.transport) {
+    const modes = toModes(raw.transport.available_modes);
     patch.transport = {
-      modes: toModes(raw.transport.available_modes),
-      recommendedMode: raw.transport.recommended_mode,
+      modes,
+      recommendedMode: pickRecommended(modes, raw.transport.recommended_mode),
       recommendedReason: raw.transport.recommended_reason,
     };
     ensureChanged("transport");
@@ -806,7 +878,10 @@ export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePa
         }),
       };
     });
-    patch.itineraryDays = days.filter((d) => d.day >= 1 && d.day <= totalDays);
+    // Out-of-range days are dropped; duplicate day numbers keep the last version the model sent.
+    const byDay = new Map<number, (typeof days)[number]>();
+    for (const d of days) if (d.day >= 1 && d.day <= totalDays) byDay.set(d.day, d);
+    patch.itineraryDays = [...byDay.values()].sort((a, b) => a.day - b.day);
     for (const d of patch.itineraryDays) ensureChanged(`day:${d.day}`);
   }
   if (typeof raw.budget_total === "number" && raw.budget_total > 0) {

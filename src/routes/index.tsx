@@ -49,7 +49,9 @@ const CHIPS = [
   "3 days in Goa from Mumbai, family of 4, ₹20,000 per person",
 ];
 
-const iso = (d: Date) => d.toISOString().slice(0, 10);
+// Local calendar date (toISOString would shift to UTC and be a day off in the IST evening).
+const iso = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 const addDays = (d: Date, n: number) => {
   const next = new Date(d);
@@ -62,6 +64,11 @@ const nextSaturday = (weeksAhead: number) => {
   const delta = ((6 - today.getDay() + 7) % 7 || 7) + weeksAhead * 7;
   return addDays(today, delta);
 };
+
+const MAX_TRAVELERS = 50;
+
+const daysInclusive = (start: string, end: string) =>
+  Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000) + 1;
 
 const DATE_CHIPS: { label: string; start: () => string; end: () => string }[] = [
   {
@@ -167,8 +174,11 @@ function Home() {
   const deleteSavedTrip = (id: string) => {
     const next = removeSavedTrip(id);
     setTrips(next);
-    if (currentId.current === id) currentId.current = undefined;
-    toast.success("Trip removed from My Trips");
+    const wasOpen = currentId.current === id;
+    if (wasOpen) currentId.current = undefined;
+    toast.success("Trip removed from My Trips", {
+      description: wasOpen ? "It's still on screen — refining it will save a fresh copy." : undefined,
+    });
   };
 
   const persist = (next: TripPlan) => {
@@ -181,6 +191,19 @@ function Home() {
     }
   };
 
+  // The prompt that produced the current origin / traveller / date answers. When the traveller
+  // types a different trip, those answers must not silently carry over.
+  const lastPrompt = useRef<string | null>(null);
+  const freshFieldsFor = (text: string) => {
+    if (lastPrompt.current === text) return { from: origin, count: travelerCount, start: startDate, end: endDate };
+    lastPrompt.current = text;
+    setOrigin(null);
+    setTravelerCount(null);
+    setStartDate(null);
+    setEndDate(null);
+    return { from: null, count: null, start: null, end: null };
+  };
+
   const run = async (
     text: string,
     from: string | null,
@@ -189,6 +212,7 @@ function Home() {
     dates: { start: string | null; end: string | null } = { start: startDate, end: endDate },
   ) => {
     if (!text || loading) return;
+    lastPrompt.current = text;
     setAskingTravelers(false);
     setAskingDates(false);
     refineSeq.current++; // invalidate any in-flight refinement
@@ -210,6 +234,7 @@ function Home() {
           travelerCount: count,
           startDate: dates.start,
           endDate: dates.end,
+          today: iso(new Date()),
         },
       });
       if (import.meta.env.DEV) {
@@ -250,16 +275,22 @@ function Home() {
     const clean = pref.trim();
     setPreference(clean);
     setAskingPreference(false);
-    void run(prompt.trim(), origin, clean, travelerCount);
+    const text = prompt.trim();
+    const f = freshFieldsFor(text);
+    void run(text, f.from, clean, f.count, { start: f.start, end: f.end });
   };
 
-  const handlePlan = () =>
-    preference
-      ? void run(prompt.trim(), origin, preference, travelerCount)
-      : openPreference();
+  const handlePlan = () => {
+    const text = prompt.trim();
+    if (!text) return;
+    // A brand-new trip description → ask the preference question again instead of reusing the old one.
+    if (!preference || lastPrompt.current !== text) return openPreference();
+    const f = freshFieldsFor(text);
+    void run(text, f.from, preference, f.count, { start: f.start, end: f.end });
+  };
 
   const chooseOrigin = (city: string) => {
-    const clean = city.trim();
+    const clean = city.trim().slice(0, 80);
     if (!clean) return;
     setOrigin(clean);
     setOriginInput("");
@@ -268,6 +299,10 @@ function Home() {
 
   const chooseTravelers = (count: number) => {
     if (!Number.isFinite(count) || count < 1) return;
+    if (count > MAX_TRAVELERS) {
+      toast.error(`We can plan for up to ${MAX_TRAVELERS} travellers at a time.`);
+      return;
+    }
     const clean = Math.round(count);
     setTravelerCount(clean);
     setTravelerInput("");
@@ -275,7 +310,23 @@ function Home() {
   };
 
   const chooseDates = (start: string, end: string | null) => {
-    if (!start) return;
+    const ISO = /^\d{4}-\d{2}-\d{2}$/;
+    if (!ISO.test(start) || (end && !ISO.test(end))) {
+      toast.error("Please pick valid dates.");
+      return;
+    }
+    if (start < iso(new Date())) {
+      toast.error("The start date is in the past — pick an upcoming date.");
+      return;
+    }
+    if (end && end < start) {
+      toast.error("The end date can't be before the start date.");
+      return;
+    }
+    if (end && daysInclusive(start, end) > 31) {
+      toast.error("We plan trips up to 31 days long.");
+      return;
+    }
     setStartDate(start);
     setEndDate(end);
     setStartInput("");
@@ -420,7 +471,8 @@ function Home() {
     setRefineText("");
     try {
       currentId.current = trip.id;
-      setPlan(trip.plan);
+      // A saved trip is always shown in full; missing details are edited via the pills, not gated.
+      setPlan({ ...trip.plan, needsOrigin: false, needsTravelerCount: false, needsDates: false });
       setOrigin(trip.plan.origin);
       setTravelerCount(trip.plan.travelerCount ?? null);
       setAskingTravelers(false);
@@ -428,6 +480,12 @@ function Home() {
       setEndDate(trip.plan.travelDates?.endDate ?? null);
       setAskingDates(false);
       setPreference(trip.plan.tripPreference ?? "");
+      // Editing a pill on a saved trip re-runs with the trip's own details, not a stale prompt.
+      const seed = `${trip.plan.days} ${trip.plan.days === 1 ? "day" : "days"} in ${trip.plan.destination}${
+        trip.plan.origin ? ` from ${trip.plan.origin}` : ""
+      }${trip.plan.budget > 0 ? ` under ₹${trip.plan.budget} per person` : ""}`;
+      setPrompt(seed);
+      lastPrompt.current = seed;
       setMarks({});
       setSelectedStay(0);
       setChangeSummary(null);
@@ -713,6 +771,7 @@ function Home() {
               <input
                 type="number"
                 min={1}
+                max={MAX_TRAVELERS}
                 value={travelerInput}
                 onChange={(e) => setTravelerInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -761,6 +820,7 @@ function Home() {
                 <input
                   type="date"
                   value={startInput}
+                  min={iso(new Date())}
                   onChange={(e) => setStartInput(e.target.value)}
                   className="mt-1 block rounded-xl border border-border bg-transparent px-4 py-2.5 text-sm text-foreground outline-none focus:border-primary"
                 />

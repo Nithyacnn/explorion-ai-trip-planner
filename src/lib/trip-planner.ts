@@ -387,7 +387,8 @@ export function planTrip(prompt: string): TripPlan {
   };
 }
 
-export const formatINR = (n: number) => "₹" + n.toLocaleString("en-IN");
+export const formatINR = (n: number | null | undefined) =>
+  "₹" + (typeof n === "number" && Number.isFinite(n) ? Math.round(n) : 0).toLocaleString("en-IN");
 
 export const destinationVibe = (name: string) =>
   DESTINATIONS.find((d) => d.name === name)?.vibe ?? FALLBACK.vibe;

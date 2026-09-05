@@ -1,4 +1,5 @@
 import { formatINR, type TripPlan } from "@/lib/trip-planner";
+import { normalizePlan } from "@/lib/plan-guard";
 
 /** Plain-text summary of a plan, for messaging apps / clipboard. */
 export function buildShareText(plan: TripPlan): string {
@@ -55,7 +56,10 @@ const fromBase64Url = (value: string) => {
   return bytes;
 };
 
-async function collect(stream: ReadableStream<Uint8Array>) {
+const MAX_TOKEN_CHARS = 200_000; // ~150 KB compressed — far beyond any real plan
+const MAX_DECODED_BYTES = 2_000_000; // guards against decompression bombs in the URL hash
+
+async function collect(stream: ReadableStream<Uint8Array>, limit = Infinity) {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -65,6 +69,10 @@ async function collect(stream: ReadableStream<Uint8Array>) {
     if (value) {
       chunks.push(value);
       size += value.length;
+      if (size > limit) {
+        await reader.cancel();
+        throw new Error("Shared trip payload is too large");
+      }
     }
   }
   const out = new Uint8Array(size);
@@ -96,20 +104,19 @@ export async function encodeSharedPlan(plan: TripPlan): Promise<string> {
 /** Decode a token produced by encodeSharedPlan. Returns null when unreadable. */
 export async function decodeSharedPlan(token: string): Promise<TripPlan | null> {
   try {
+    if (!token || token.length > MAX_TOKEN_CHARS) return null;
     const mode = token.slice(0, 1);
+    if (mode !== "0" && mode !== "1") return null;
     const bytes = fromBase64Url(token.slice(1));
     let json: string;
     if (mode === "1") {
       const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream("gzip"));
-      json = new TextDecoder().decode(await collect(stream));
+      json = new TextDecoder().decode(await collect(stream, MAX_DECODED_BYTES));
     } else {
       json = new TextDecoder().decode(bytes);
     }
-    const parsed: unknown = JSON.parse(json);
-    if (!parsed || typeof parsed !== "object") return null;
-    const plan = parsed as TripPlan;
-    if (typeof plan.destination !== "string" || !Array.isArray(plan.itinerary)) return null;
-    return plan;
+    // Everything in the token is untrusted: sanitise before it reaches the dashboard.
+    return normalizePlan(JSON.parse(json));
   } catch (error) {
     console.error("[Explorion] shared trip could not be read:", error);
     return null;
