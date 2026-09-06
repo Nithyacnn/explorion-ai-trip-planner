@@ -1,8 +1,15 @@
+export type AccessibilityFlags = {
+  wheelchairAccessible: boolean | "unconfirmed";
+  dietaryMatch?: boolean | "unconfirmed" | undefined;
+  note?: string | undefined;
+};
+
 export type Stop = {
   activity: string;
   why?: string | undefined;
   travelTimeFromPrevious?: string | undefined;
   optional?: boolean | undefined;
+  accessibilityFlags?: AccessibilityFlags | undefined;
 };
 export type Slot = {
   label: string;
