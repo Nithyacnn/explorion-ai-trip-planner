@@ -582,9 +582,13 @@ function Home() {
       if (requestId !== refineSeq.current) return;
       console.error("[Explorion] transport switch failed:", err);
       // Keep the optimistic local estimate but tell the traveller it wasn't confirmed.
-      persist(optimistic);
+      const optimisticTotal = optimistic.budgetBreakdown.reduce((t, b) => t + b.amount, 0);
+      const kept = optimisticTotal > 0 ? { ...optimistic, budget: optimisticTotal } : optimistic;
+      setPlan(kept);
+      persist(kept);
+      const reason = err instanceof Error && err.message ? err.message : "";
       toast.error("Couldn't refresh the budget for that mode", {
-        description: "Showing a local estimate instead.",
+        description: reason ? `${reason} Showing a local estimate instead.` : "Showing a local estimate instead.",
       });
     } finally {
       if (requestId === refineSeq.current) setSwitchingMode(false);
