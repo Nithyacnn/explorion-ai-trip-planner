@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Accessibility, Utensils, X, Trash2, Plus } from "lucide-react";
+import { Accessibility, Utensils, X, Trash2, Plus, MapPin, PawPrint } from "lucide-react";
 import {
   DIET_LABELS,
   DIET_OPTIONS,
@@ -8,15 +8,23 @@ import {
   MAX_TAG_LEN,
   MOBILITY_LABELS,
   MOBILITY_OPTIONS,
+  MAX_ORIGIN_LEN,
+  PET_SIZES,
+  PET_SIZE_LABELS,
+  PET_TYPES,
+  PET_TYPE_LABELS,
   SENSORY_LABELS,
   SENSORY_OPTIONS,
   emptyAccessibility,
   emptyDietary,
+  emptyPet,
   isEmptyAccessibility,
   isEmptyDietary,
+  isEmptyPet,
   normalizeProfile,
   type AccessibilityProfile,
   type DietaryProfile,
+  type PetProfile,
   type TravelerProfile,
 } from "@/lib/traveler-profile";
 
@@ -39,6 +47,8 @@ const chip = (active: boolean) =>
 export function TravelerProfileEditor({ initial, hasSavedProfile, onSave, onClear, onClose }: Props) {
   const [access, setAccess] = useState<AccessibilityProfile>(initial?.accessibility ?? emptyAccessibility());
   const [diet, setDiet] = useState<DietaryProfile>(initial?.dietary ?? emptyDietary());
+  const [pet, setPet] = useState<PetProfile>(initial?.pet ?? emptyPet());
+  const [startingPoint, setStartingPoint] = useState(initial?.startingPoint ?? "");
   const [allergyInput, setAllergyInput] = useState("");
   const [sessionOnly, setSessionOnly] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
@@ -75,8 +85,10 @@ export function TravelerProfileEditor({ initial, hasSavedProfile, onSave, onClea
 
   const save = () => {
     const profile = normalizeProfile({
+      startingPoint: startingPoint.trim() || null,
       accessibility: isEmptyAccessibility(access) ? null : access,
       dietary: isEmptyDietary(diet) ? null : diet,
+      pet: isEmptyPet(pet) ? null : pet,
       updatedAt: new Date().toISOString(),
     });
     onSave(profile, sessionOnly);
@@ -101,7 +113,7 @@ export function TravelerProfileEditor({ initial, hasSavedProfile, onSave, onClea
               My travel profile
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Saved on this device and applied to every trip you plan — so you never re-type it.
+              Saved on this device and applied to every trip you plan — so you never re-type it. Every section is optional.
             </p>
           </div>
           <button
@@ -113,6 +125,23 @@ export function TravelerProfileEditor({ initial, hasSavedProfile, onSave, onClea
             <X className="size-4" />
           </button>
         </div>
+
+        {/* Starting point */}
+        <section className="mt-6 space-y-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <MapPin className="size-4 text-primary" /> Starting point
+          </h3>
+          <input
+            value={startingPoint}
+            maxLength={MAX_ORIGIN_LEN}
+            onChange={(e) => setStartingPoint(e.target.value)}
+            placeholder="Your usual departure city (e.g. Bengaluru)"
+            className="w-full rounded-xl border border-border bg-transparent px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary"
+          />
+          <p className="text-xs text-muted-foreground">
+            Pre-fills where you travel from. You can still change it for any single trip.
+          </p>
+        </section>
 
         {/* Dietary */}
         <section className="mt-6 space-y-3">
@@ -217,6 +246,54 @@ export function TravelerProfileEditor({ initial, hasSavedProfile, onSave, onClea
             placeholder="Anything else (e.g. avoid long stairs, need ground-floor rooms)"
             className="w-full resize-none rounded-xl border border-border bg-transparent px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary"
           />
+        </section>
+
+        {/* Pet */}
+        <section className="mt-6 space-y-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <PawPrint className="size-4 text-primary" /> Travelling with a pet
+          </h3>
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={pet.traveling}
+              onChange={(e) => setPet((p) => (e.target.checked ? { ...p, traveling: true } : emptyPet()))}
+              className="size-4 accent-primary"
+            />
+            My pet is coming along
+          </label>
+          {pet.traveling ? (
+            <div className="space-y-3 rounded-xl border border-border p-3">
+              <div>
+                <p className="mb-1.5 text-xs text-muted-foreground">Type</p>
+                <div className="flex flex-wrap gap-2">
+                  {PET_TYPES.map((t) => (
+                    <button key={t} type="button" onClick={() => setPet((p) => ({ ...p, type: t }))} className={chip(pet.type === t)}>
+                      {PET_TYPE_LABELS[t]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="mb-1.5 text-xs text-muted-foreground">Size — decides cabin vs. cargo and stay rules</p>
+                <div className="flex flex-wrap gap-2">
+                  {PET_SIZES.map((sz) => (
+                    <button key={sz} type="button" onClick={() => setPet((p) => ({ ...p, size: sz }))} className={chip(pet.size === sz)}>
+                      {PET_SIZE_LABELS[sz]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <textarea
+                rows={2}
+                value={pet.notes}
+                maxLength={MAX_NOTES}
+                onChange={(e) => setPet((p) => ({ ...p, notes: e.target.value }))}
+                placeholder="Anything else (e.g. crate-trained, anxious in crowds, needs a garden)"
+                className="w-full resize-none rounded-xl border border-border bg-transparent px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary"
+              />
+            </div>
+          ) : null}
         </section>
 
         {/* Session-only toggle */}
