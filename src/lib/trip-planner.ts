@@ -151,6 +151,8 @@ export type TripPlan = {
   style?: string;
   vibe?: string;
   tripPreference?: string;
+  /** Property types the traveller asked for (empty = no preference). */
+  stayTypes?: StayType[];
   international?: boolean;
   visa?: VisaInfo | null;
   visaUnavailable?: boolean;
