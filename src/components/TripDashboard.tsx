@@ -25,10 +25,14 @@ import {
   AlertTriangle,
   Clock,
   Accessibility,
+  PawPrint,
+  ShieldCheck,
+  Loader2,
 } from "lucide-react";
 import {
   formatINR,
   isValidTravelerCount,
+  RISK_LABELS,
   VISA_STATUS,
   type Stay,
   type TransportModeId,
@@ -122,6 +126,9 @@ export type DashboardProps = {
   onSelectStay: (index: number) => void;
   changeSummary?: string | null;
   shareable?: boolean;
+  /** Tapping a non-selected transport mode; omitted = read-only (shared view). */
+  onSelectMode?: (mode: TransportModeId) => void;
+  switchingMode?: boolean;
 };
 
 export function TripDashboard({
@@ -135,6 +142,8 @@ export function TripDashboard({
   onSelectStay,
   changeSummary,
   shareable = true,
+  onSelectMode,
+  switchingMode = false,
 }: DashboardProps) {
   const [booking, setBooking] = useState<string | null>(null);
 
@@ -144,6 +153,11 @@ export function TripDashboard({
   const stayIndex = Math.min(Math.max(0, selectedStay), Math.max(stays.length - 1, 0));
   const stay = stays[stayIndex];
   const visaStatus = plan.visa ? VISA_STATUS[plan.visa.type] ?? VISA_STATUS.advance_visa : null;
+  const recommendedMode = plan.transport?.recommendedMode;
+  const selectedMode =
+    plan.transport?.selectedMode && modes.some((m) => m.mode === plan.transport.selectedMode)
+      ? plan.transport.selectedMode
+      : recommendedMode;
 
   const breakdown = useMemo(() => {
     const base = Array.isArray(plan.budgetBreakdown) ? plan.budgetBreakdown : [];
@@ -280,6 +294,7 @@ export function TripDashboard({
                 <h3 className="font-display text-xl">Transport options</h3>
                 <p className="mt-1 text-xs opacity-70">
                   Round-trip fares shown per person{plan.origin ? ` · from ${plan.origin}` : ""}
+                  {onSelectMode && modes.length > 1 ? " · tap a mode to use it in your budget" : ""}
                 </p>
               </div>
               <MarkToggle
@@ -306,21 +321,55 @@ export function TripDashboard({
                 modes.map((t) => {
                   const Icon = MODE_ICONS[t.mode] ?? Plane;
                   const link = transportSearchLink(t.mode, plan.origin, plan.destination, plan.month);
-                  const isRec = t.mode === plan.transport?.recommendedMode;
+                  const isRec = t.mode === recommendedMode;
+                  const isSel = t.mode === selectedMode;
+                  const tappable = !!onSelectMode && !isSel && !switchingMode;
                   return (
                     <div
                       key={t.mode}
-                      className={`flex items-start gap-4 rounded-xl border p-4 ${
-                        isRec ? "border-primary bg-primary/10" : "border-current/10 bg-black/[0.03]"
+                      role={onSelectMode ? "button" : undefined}
+                      tabIndex={tappable ? 0 : undefined}
+                      aria-pressed={onSelectMode ? isSel : undefined}
+                      aria-label={onSelectMode ? `${isSel ? "Selected" : "Select"} ${t.label}` : undefined}
+                      onClick={tappable ? () => onSelectMode(t.mode) : undefined}
+                      onKeyDown={
+                        tappable
+                          ? (e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                onSelectMode(t.mode);
+                              }
+                            }
+                          : undefined
+                      }
+                      className={`flex items-start gap-4 rounded-xl border p-4 transition ${
+                        isSel
+                          ? "border-primary bg-primary/10 ring-1 ring-primary/40"
+                          : "border-current/10 bg-black/[0.03]"
+                      } ${tappable ? "cursor-pointer hover:border-primary/60 hover:bg-primary/5" : ""} ${
+                        switchingMode && !isSel ? "opacity-60" : ""
                       }`}
                     >
                       <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
                         <Icon className="size-5" />
                       </span>
-                      <div className="min-w-0">
-                        <p className="text-[11px] font-semibold uppercase tracking-wider opacity-70">
-                          {t.label}
-                        </p>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <p className="text-[11px] font-semibold uppercase tracking-wider opacity-70">
+                            {t.label}
+                          </p>
+                          {isRec ? (
+                            <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide">
+                              Recommended
+                            </span>
+                          ) : null}
+                          {isSel ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-primary-foreground">
+                              {switchingMode ? <Loader2 className="size-2.5 animate-spin" /> : <Check className="size-2.5" />}
+                              {switchingMode ? "Updating budget" : "Selected"}
+                            </span>
+                          ) : null}
+                        </div>
                         <p className="mt-0.5 inline-flex rounded-lg bg-primary/15 px-2.5 py-1 text-lg font-semibold tabular-nums tracking-tight">
                           {formatINR(t.min)} – {formatINR(t.max)}
                         </p>
@@ -332,6 +381,7 @@ export function TripDashboard({
                           href={link.url}
                           target="_blank"
                           rel="noreferrer noopener"
+                          onClick={(e) => e.stopPropagation()}
                           className="mt-2 inline-flex items-center gap-1 text-xs font-semibold underline underline-offset-4"
                         >
                           Search on {link.provider} <ExternalLink className="size-3" />
@@ -509,6 +559,44 @@ export function TripDashboard({
                                         <p className="mt-0.5 text-[11px] italic opacity-60">
                                           why: {stop.why}
                                         </p>
+                                      ) : null}
+                                      {stop.replacedForSafety || stop.petFriendly !== undefined || stop.accessibilityRisk?.length ? (
+                                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                          {stop.replacedForSafety ? (
+                                            <span
+                                              title={`Original: ${stop.replacedForSafety}`}
+                                              className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-700"
+                                            >
+                                              <ShieldCheck className="size-2.5" /> Swapped for accessibility
+                                            </span>
+                                          ) : null}
+                                          {stop.petFriendly === true ? (
+                                            <span className="inline-flex items-center gap-1 rounded-full bg-current/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide opacity-60">
+                                              <PawPrint className="size-2.5" /> Pet-friendly
+                                            </span>
+                                          ) : stop.petFriendly === "unconfirmed" ? (
+                                            <span className="inline-flex items-center gap-1 rounded-full border border-primary/60 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-primary">
+                                              <PawPrint className="size-2.5" /> Pet policy unconfirmed
+                                            </span>
+                                          ) : stop.petFriendly === false ? (
+                                            <span className="inline-flex items-center gap-1 rounded-full border border-destructive/60 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-destructive">
+                                              <PawPrint className="size-2.5" /> No pets
+                                            </span>
+                                          ) : null}
+                                          {(stop.accessibilityRisk ?? []).map((r) => (
+                                            <span
+                                              key={r}
+                                              className="rounded-full bg-current/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide opacity-60"
+                                            >
+                                              {RISK_LABELS[r] ?? r}
+                                            </span>
+                                          ))}
+                                          {stop.intensity === "high" ? (
+                                            <span className="rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700">
+                                              High intensity
+                                            </span>
+                                          ) : null}
+                                        </div>
                                       ) : null}
                                       {stop.accessibilityFlags ? (
                                         <div className="mt-1 flex flex-wrap items-center gap-1.5">

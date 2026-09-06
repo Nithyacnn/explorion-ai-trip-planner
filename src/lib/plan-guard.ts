@@ -1,4 +1,13 @@
-import { MODE_LABELS, type TripPlan, type TransportModeId, type VisaType } from "@/lib/trip-planner";
+import {
+  ACCESSIBILITY_RISKS,
+  INTENSITIES,
+  MODE_LABELS,
+  type AccessibilityRisk,
+  type Intensity,
+  type TripPlan,
+  type TransportModeId,
+  type VisaType,
+} from "@/lib/trip-planner";
 
 /**
  * Deep-sanitises any plan-like value (old saved trips, hand-crafted share tokens, AI drift)
@@ -41,6 +50,15 @@ const accessFlags = (v: unknown) => {
   return { wheelchairAccessible: wc ?? "unconfirmed", dietaryMatch: dm, note: optStr(f["note"]) };
 };
 
+const intensity = (v: unknown): Intensity | undefined =>
+  INTENSITIES.includes(v as Intensity) ? (v as Intensity) : undefined;
+const risks = (v: unknown): AccessibilityRisk[] | undefined => {
+  const out = arr(v).filter((r): r is AccessibilityRisk =>
+    (ACCESSIBILITY_RISKS as readonly string[]).includes(r as string),
+  );
+  return out.length ? [...new Set(out)] : undefined;
+};
+
 export function normalizePlan(value: unknown): TripPlan | null {
   const p = obj(value);
   const destination = str(p["destination"]).trim();
@@ -71,6 +89,10 @@ export function normalizePlan(value: unknown): TripPlan | null {
                   travelTimeFromPrevious: optStr(x["travelTimeFromPrevious"]),
                   optional: x["optional"] === true,
                   accessibilityFlags: accessFlags(x["accessibilityFlags"]),
+                  intensity: intensity(x["intensity"]),
+                  accessibilityRisk: risks(x["accessibilityRisk"]),
+                  petFriendly: tri(x["petFriendly"]),
+                  replacedForSafety: optStr(x["replacedForSafety"]),
                 })),
             };
           }),
@@ -164,6 +186,9 @@ export function normalizePlan(value: unknown): TripPlan | null {
       modes,
       recommendedMode: str(transportRaw["recommendedMode"]),
       recommendedReason: str(transportRaw["recommendedReason"]),
+      selectedMode: modes.some((m) => m.mode === transportRaw["selectedMode"])
+        ? (transportRaw["selectedMode"] as string)
+        : undefined,
     },
     itinerary,
     budgetBreakdown,
