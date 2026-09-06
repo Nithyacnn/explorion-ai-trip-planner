@@ -1210,8 +1210,10 @@ export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePa
       patch.budgetTotal ?? data.plan.budget,
     );
     ensureChanged("budget");
-    if (selected && !patch.budgetTotal)
-      patch.budgetTotal = patch.budgetBreakdown.reduce((t, x) => t + x.amount, 0) || undefined;
+    if (selected && !patch.budgetTotal) {
+      const sum = patch.budgetBreakdown.reduce((t, x) => t + x.amount, 0);
+      if (sum > 0) patch.budgetTotal = sum;
+    }
   }
   // "changed" claimed sections that never arrived → treat as no-op so the UI can say so.
   const delivered = new Set<string>([
