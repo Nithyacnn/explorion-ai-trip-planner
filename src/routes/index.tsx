@@ -15,11 +15,20 @@ import {
   Trash2,
   AlertTriangle,
   Accessibility,
+  BedDouble,
   UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import { generateTripPlan, refineTripPlan } from "@/lib/trip-ai.functions";
-import { destinationVibe, formatINR, type TransportModeId, type TripPlan } from "@/lib/trip-planner";
+import {
+  destinationVibe,
+  formatINR,
+  STAY_TYPES,
+  STAY_TYPE_LABELS,
+  type StayType,
+  type TransportModeId,
+  type TripPlan,
+} from "@/lib/trip-planner";
 import { TripDashboard } from "@/components/TripDashboard";
 import { TravelerProfileEditor } from "@/components/TravelerProfileEditor";
 import { loadSavedTrips, removeSavedTrip, restoreSavedTrip, saveTrip, type SavedTrip } from "@/lib/saved-trips";
@@ -139,6 +148,10 @@ function Home() {
   const [askingPreference, setAskingPreference] = useState(false);
   const [preference, setPreference] = useState("");
   const [preferenceInput, setPreferenceInput] = useState("");
+  const [stayTypes, setStayTypes] = useState<StayType[]>([]);
+  const [stayTypesInput, setStayTypesInput] = useState<StayType[]>([]);
+  const toggleStayType = (t: StayType) =>
+    setStayTypesInput((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
 
   // Traveller profile: the saved one (localStorage) and an optional session-only override.
   const [savedProfile, setSavedProfile] = useState<TravelerProfile | null>(null);
@@ -280,6 +293,7 @@ function Home() {
     pref: string,
     count: number | null,
     dates: { start: string | null; end: string | null } = { start: startDate, end: endDate },
+    types: StayType[] = stayTypes,
   ) => {
     if (!text || loading) return;
     lastPrompt.current = text;
@@ -302,6 +316,7 @@ function Home() {
           origin: from,
           defaultOrigin: from ? null : defaultOriginRef.current,
           preference: pref,
+          stayTypes: types,
           travelerCount: count,
           startDate: dates.start,
           endDate: dates.end,
@@ -338,6 +353,7 @@ function Home() {
   const openPreference = () => {
     if (!prompt.trim()) return;
     setPreferenceInput(preference);
+    setStayTypesInput(stayTypes);
     setError(null);
     setPlan(null);
     setAskingPreference(true);
@@ -346,10 +362,11 @@ function Home() {
   const submitPreference = (pref: string) => {
     const clean = pref.trim();
     setPreference(clean);
+    setStayTypes(stayTypesInput);
     setAskingPreference(false);
     const text = prompt.trim();
     const f = freshFieldsFor(text);
-    void run(text, f.from, clean, f.count, { start: f.start, end: f.end });
+    void run(text, f.from, clean, f.count, { start: f.start, end: f.end }, stayTypesInput);
   };
 
   const handlePlan = () => {
@@ -419,6 +436,7 @@ function Home() {
 
   const editPreference = () => {
     setPreferenceInput(preference);
+    setStayTypesInput(stayTypes);
     setAskingPreference(true);
   };
 
@@ -612,6 +630,7 @@ function Home() {
       setEndDate(trip.plan.travelDates?.endDate ?? null);
       setAskingDates(false);
       setPreference(trip.plan.tripPreference ?? "");
+      setStayTypes(trip.plan.stayTypes ?? []);
       // Editing a pill on a saved trip re-runs with the trip's own details, not a stale prompt.
       const seed = `${trip.plan.days} ${trip.plan.days === 1 ? "day" : "days"} in ${trip.plan.destination}${
         trip.plan.origin ? ` from ${trip.plan.origin}` : ""
@@ -922,6 +941,34 @@ function Home() {
                 </button>
               )}
             </div>
+            <div className="space-y-2">
+              <p className="flex items-center gap-2 text-sm text-foreground">
+                <BedDouble className="size-4 text-primary" /> Where would you like to stay?
+                <span className="text-xs text-muted-foreground">
+                  Pick any that appeal — we&apos;ll match them to your budget.
+                </span>
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {STAY_TYPES.map((t) => {
+                  const on = stayTypesInput.includes(t);
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => toggleStayType(t)}
+                      className={`rounded-full border px-3.5 py-1.5 text-xs transition ${
+                        on
+                          ? "border-primary bg-primary/15 text-foreground"
+                          : "border-border text-muted-foreground hover:border-primary hover:text-primary"
+                      }`}
+                    >
+                      {STAY_TYPE_LABELS[t]}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <textarea
               rows={2}
               value={preferenceInput}
@@ -938,7 +985,7 @@ function Home() {
             <div className="flex flex-wrap items-center gap-4">
               <button
                 onClick={() => submitPreference(preferenceInput)}
-                disabled={!preferenceInput.trim()}
+                disabled={!preferenceInput.trim() && stayTypesInput.length === 0}
                 className="brass-glow inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition hover:brightness-110 disabled:opacity-50"
               >
                 Build my itinerary <ArrowRight className="size-4" />
