@@ -6,7 +6,6 @@ import {
   MODE_LABELS,
   type AccessibilityRisk,
   type DayPlan,
-  type Intensity,
   type Stop,
   type TripPlan,
   type TransportModeId,
