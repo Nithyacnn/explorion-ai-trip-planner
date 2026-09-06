@@ -9,6 +9,8 @@ import {
   type Stop,
   type TripPlan,
   type TransportModeId,
+  STAY_TYPES,
+  STAY_TYPE_LABELS,
 } from "@/lib/trip-planner";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -702,7 +704,7 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
     const profileLine = profileBlock(data.profile ?? undefined);
     const text = await callAi(
       SYSTEM,
-      `${data.prompt}${originLine}${travelerLine}${datesLine}${preferenceLine}${profileLine}\nTODAY'S DATE is ${today} — resolve every relative date against it.\nAny budget figure in the prompt is PER PERSON.\n\nReturn ONLY the raw JSON object described in the system message.`,
+      `${data.prompt}${originLine}${travelerLine}${datesLine}${preferenceLine}${stayTypesLine}${profileLine}\nTODAY'S DATE is ${today} — resolve every relative date against it.\nAny budget figure in the prompt is PER PERSON.\n\nReturn ONLY the raw JSON object described in the system message.`,
       "plan",
     );
 
@@ -808,6 +810,7 @@ const currentPlanSchema = z.object({
   month: optStr,
   style: optStr,
   tripPreference: optStr,
+  stayTypes: z.array(z.enum(STAY_TYPES)).nullable().optional(),
   international: z.boolean().nullable().optional(),
   transport: z
     .object({
@@ -927,6 +930,7 @@ function toRefineContext(p: z.infer<typeof currentPlanSchema>) {
     month: p.month ?? "Anytime",
     style: p.style ?? "balanced",
     trip_preference: p.tripPreference ?? "",
+    preferred_stay_types: (p.stayTypes ?? []).map((t) => STAY_TYPE_LABELS[t]),
     international: p.international === true,
     transport: {
       available_modes: p.transport.modes.map((m) => ({
