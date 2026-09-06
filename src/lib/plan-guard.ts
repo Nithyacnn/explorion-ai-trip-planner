@@ -60,6 +60,7 @@ export function normalizePlan(value: unknown): TripPlan | null {
                   why: optStr(x["why"]),
                   travelTimeFromPrevious: optStr(x["travelTimeFromPrevious"]),
                   optional: x["optional"] === true,
+                  accessibilityFlags: accessFlags(x["accessibilityFlags"]),
                 })),
             };
           }),
