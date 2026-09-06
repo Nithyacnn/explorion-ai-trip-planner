@@ -19,7 +19,16 @@ import { toast } from "sonner";
 import { generateTripPlan, refineTripPlan } from "@/lib/trip-ai.functions";
 import { destinationVibe, formatINR, type TripPlan } from "@/lib/trip-planner";
 import { TripDashboard } from "@/components/TripDashboard";
+import { TravelerProfileEditor } from "@/components/TravelerProfileEditor";
 import { loadSavedTrips, removeSavedTrip, restoreSavedTrip, saveTrip, type SavedTrip } from "@/lib/saved-trips";
+import {
+  clearTravelerProfile,
+  loadTravelerProfile,
+  saveTravelerProfile,
+  summarizeProfile,
+  toProfileWire,
+  type TravelerProfile,
+} from "@/lib/traveler-profile";
 
 export const Route = createFileRoute("/")({
   head: () => ({
