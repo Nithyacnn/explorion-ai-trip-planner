@@ -1,7 +1,16 @@
 import { APICallError, streamText } from "ai";
 import { z } from "zod";
 import { extractJson } from "@/lib/json-extract";
-import { MODE_LABELS, type TripPlan, type TransportModeId } from "@/lib/trip-planner";
+import {
+  ACCESSIBILITY_RISKS,
+  MODE_LABELS,
+  type AccessibilityRisk,
+  type DayPlan,
+  type Intensity,
+  type Stop,
+  type TripPlan,
+  type TransportModeId,
+} from "@/lib/trip-planner";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_DAYS = 31;
@@ -29,15 +38,27 @@ const ProfileInput = z
       })
       .nullable()
       .optional(),
+    pet: z
+      .object({
+        traveling: z.boolean().default(true),
+        type: z.enum(["dog", "cat", "small-pet", "other"]).nullable().optional(),
+        size: z.enum(["small", "medium", "large"]).nullable().optional(),
+        notes: z.string().trim().max(300).default(""),
+      })
+      .nullable()
+      .optional(),
   })
   .nullable()
   .optional();
 type ProfileInputType = z.infer<typeof ProfileInput>;
+type ProfileObj = NonNullable<ProfileInputType>;
 
 // Bounded, so an abusive client can't ship megabytes into the model prompt.
 const Input = z.object({
   prompt: z.string().trim().min(1).max(2000),
   origin: z.string().trim().max(80).nullable().optional(),
+  /** Profile starting point — used only when the prompt names no other departure city. */
+  defaultOrigin: z.string().trim().max(80).nullable().optional(),
   travelerCount: z.number().finite().min(1).max(MAX_TRAVELERS).nullable().optional(),
   preference: z.string().trim().max(600).nullable().optional(),
   startDate: isoDate.nullable().optional(),
@@ -78,12 +99,33 @@ const accessibilityFlagsSchema = z
   .nullable()
   .optional();
 
+const intensitySchema = z.preprocess((v) => {
+  if (typeof v !== "string") return undefined;
+  const t = v.trim().toLowerCase();
+  if (["low", "easy", "light", "relaxed"].includes(t)) return "low";
+  if (["moderate", "medium", "mid"].includes(t)) return "moderate";
+  if (["high", "hard", "strenuous", "intense"].includes(t)) return "high";
+  return undefined;
+}, z.enum(["low", "moderate", "high"]).optional());
+
+const riskListSchema = z.preprocess((v) => {
+  const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(/[,;]/) : [];
+  const out = list
+    .filter((r): r is string => typeof r === "string")
+    .map((r) => r.trim().toLowerCase().replace(/[\s_]+/g, "-"))
+    .filter((r): r is AccessibilityRisk => (ACCESSIBILITY_RISKS as readonly string[]).includes(r));
+  return [...new Set(out)];
+}, z.array(z.enum(ACCESSIBILITY_RISKS)));
+
 const stopSchema = z.object({
   activity: z.string(),
   why: z.string().nullable().optional(),
   travel_time_from_previous: z.string().nullable().optional(),
   optional: z.boolean().nullable().optional(),
   accessibility_flags: accessibilityFlagsSchema,
+  intensity: intensitySchema,
+  accessibility_risk: riskListSchema.optional(),
+  pet_friendly: triState,
 });
 
 /** Structured profile → a clear instruction block for the model (only when something is set). */
@@ -100,6 +142,12 @@ function profileBlock(profile: ProfileInputType | undefined): string {
   if (a && (a.mobility !== "none" || a.sensory.length || a.service_animal || a.notes)) {
     lines.push(
       `ACCESSIBILITY (hard constraint): mobility=${a.mobility}; sensory=${a.sensory.length ? JSON.stringify(a.sensory) : "none"}; service_animal=${a.service_animal}${a.notes ? `; notes="${a.notes}"` : ""}.`,
+    );
+  }
+  const pet = profile.pet;
+  if (pet && pet.traveling) {
+    lines.push(
+      `PET (hard constraint): travelling with a ${pet.size ?? "unknown-size"} ${pet.type ?? "pet"}${pet.notes ? `; notes="${pet.notes}"` : ""}. Fill "pet_friendly" on every stop and state the pet policy in every stay "why" and every transport mode "notes".`,
     );
   }
   if (!lines.length) return "";
@@ -199,7 +247,8 @@ const planSchema = z.object({
   }),
 });
 
-const BLOCK_SHAPE = `{"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean,"accessibility_flags":{"wheelchair_accessible":boolean|"unconfirmed","dietary_match":boolean|"unconfirmed","note":string}}],"time_range":string,"overpacked":boolean}`;
+const RISK_VOCAB = ACCESSIBILITY_RISKS.map((r) => `"${r}"`).join("|");
+const BLOCK_SHAPE = `{"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean,"intensity":"low"|"moderate"|"high","accessibility_risk":[${RISK_VOCAB}],"pet_friendly":boolean|"unconfirmed","accessibility_flags":{"wheelchair_accessible":boolean|"unconfirmed","dietary_match":boolean|"unconfirmed","note":string}}],"time_range":string,"overpacked":boolean}`;
 
 const VISA_SHAPE = `{"required":boolean,"type":"not_required"|"visa_on_arrival"|"e_visa"|"advance_visa","estimated_cost":{"low":number,"high":number,"currency":string},"processing_time":string,"apply_by":string,"how_to_apply":string,"notes":string}`;
 
@@ -248,6 +297,7 @@ Activity density (there is NO fixed cap of 2 stops):
 - Every stop after the first in a block MUST have "travel_time_from_previous" as a human string ("12 min walk", "25 min drive"). The first stop of a block uses an empty string.
 - "why" is one short clause explaining the pick; "optional" is true only for a genuinely skippable extra or an alternate meal pick.
 - If the stops plus their travel times realistically exceed the block's time_range, set "overpacked": true on that block (otherwise false).
+- EVERY stop (always, profile or not) carries "intensity" ("low" = seated/flat/short, "moderate" = some walking or standing, "high" = trekking, climbing, long hikes, water sports, strenuous activity) and "accessibility_risk": an array using ONLY these tags: ${RISK_VOCAB} (empty array when none apply). Be honest — a fort with 200 steps is ["stairs","climbing"], a market is ["crowded"], a beach is ["uneven-terrain"].
 - If trip_preference names a theme (cafe hunting, street food, nightlife, shopping, adventure), bias stops in MULTIPLE blocks across the day toward that theme, while still covering 06:00–22:00.
 - budget_breakdown: all four values are per person and must sum to approximately budget_total (for international trips include any per-traveller visa fee inside "activities" only if it is not shown separately — prefer leaving visa fees out of the four buckets, the UI adds them), and the top-rated stay's price_per_night × duration_days should roughly match budget_breakdown.stay.
 - agent_labels must be exactly: transport "Research Agent", stay "Property Verification Agent", itinerary "Itinerary Builder Agent", budget_breakdown "Budget Optimisation Agent".
@@ -263,9 +313,11 @@ Trip preference shaping (apply ALL signals present, combined):
 
 Traveller profile rules (when a TRAVELLER PROFILE block is present in the request — these override every other preference):
 - Dietary: every meal stop, alternate pick and food-themed activity MUST match dietary.type (vegetarian = no meat/fish/egg dishes; vegan = no animal products; jain = no meat, egg, onion, garlic or root vegetables; halal / kosher = certified or clearly compliant venues). Never suggest any dish or venue built around an item in dietary.allergies; when a local speciality conflicts, replace it with a compliant local dish and say so in "why". Set "dietary_match": true on compliant meal stops, false only if unavoidable and clearly warned in "why", "unconfirmed" when you cannot verify the venue.
+- HARD EXCLUSION (non-negotiable): when mobility is "wheelchair" or "limited-mobility", you must NOT include any stop with "intensity": "high", nor (for wheelchair) any stop whose accessibility_risk contains uneven-terrain, long-walking-distance, climbing, stairs or water-based, nor (for limited-mobility) climbing, stairs or long-walking-distance. Substitute a comparable LOWER-RISK activity in the same slot (e.g. a stair-only fort → its accessible museum or a viewpoint reachable by vehicle) — never leave the slot empty and never keep the unsafe stop "just flagged". Violations are stripped automatically after generation, so a violating stop wastes the slot.
 - Accessibility, mobility = "wheelchair": suggest ONLY stays and activities that are wheelchair-accessible (step-free entry, lifts, accessible rooms/transport). No treks, stair-only forts, boat boarding without ramps, or dune/beach walks without boardwalks. If you cannot confirm a stop is wheelchair-accessible, either drop it or keep it with "wheelchair_accessible": "unconfirmed" and a short "note" saying what to check — NEVER silently include it. Every stay option's "why" must state its accessibility. Prefer the flattest, shortest travel between stops.
 - mobility = "limited-mobility": avoid long walks, steep climbs and many stairs; keep travel between stops short; flag stops with significant walking via "note".
-- sensory needs: visual → guided/audio-described experiences, avoid unmarked terrain; hearing → visual-guided options, note where guides are audio-only; cognitive / sensory-sensitive → calmer, less crowded slots, avoid loud or chaotic venues, keep the day structured.
+- sensory needs are ACCOMMODATED, not excluded: visual → guided/audio-described experiences, avoid unmarked terrain, and add a "note" on stops tagged visual-only / low-light / uneven-terrain (e.g. "primarily visual — ask about audio or tactile guides on site"); hearing → visual-guided options and a "note" on audio-only stops; cognitive / sensory-sensitive → calmer, less crowded slots and a "note" on crowded / loud stops suggesting quieter timings. Keep the stop, add the note.
+- PET travelling: every stay option must be pet-friendly or clearly marked in "why" as "pet policy unconfirmed — call ahead"; activities where pets are usually barred (museums, temples, wildlife sanctuaries, many beaches) either get a pet-friendly alternative or "pet_friendly": false with a "note" on what to do with the pet. Set "pet_friendly": true only when you are confident, "unconfirmed" otherwise — never silently assume. Transport mode "notes" MUST mention the pet policy: Indian domestic airlines mostly do not allow pets in cabin (Air India allows small pets in cabin on some routes; others require cargo/excess baggage booking), Indian Railways requires a dog to travel in a booked first-class coupe or the brake van, buses generally refuse pets, own_vehicle is simplest. Weigh this in recommended_reason.
 - service_animal = true: only stays and venues that admit service animals; note where policy is unclear.
 - Fill "accessibility_flags" on EVERY stop when a profile is present: {"wheelchair_accessible": true|false|"unconfirmed", "dietary_match": true|false|"unconfirmed" (meals only; omit for non-food stops), "note": string (empty when nothing to flag)}. When no profile is present omit accessibility_flags entirely.`;
 
@@ -385,6 +437,9 @@ function toSlots(d: z.infer<typeof daySchema>) {
           i > 0 ? s.travel_time_from_previous?.trim() || undefined : undefined,
         optional: s.optional === true,
         accessibilityFlags: toFlags(s.accessibility_flags),
+        intensity: s.intensity,
+        accessibilityRisk: s.accessibility_risk?.length ? s.accessibility_risk : undefined,
+        petFriendly: s.pet_friendly,
       })),
   })).map((slot, j) =>
     slot.stops.length
@@ -401,6 +456,106 @@ function toSlots(d: z.infer<typeof daySchema>) {
           ],
         },
   );
+}
+
+/* ---------------- Profile safety pass (server-side, model-independent) ---------------- */
+
+const WHEELCHAIR_BLOCKED: AccessibilityRisk[] = ["uneven-terrain", "long-walking-distance", "climbing", "stairs", "water-based"];
+const LIMITED_BLOCKED: AccessibilityRisk[] = ["climbing", "stairs", "long-walking-distance"];
+const SENSORY_NOTES: Record<string, Partial<Record<AccessibilityRisk, string>>> = {
+  visual: {
+    "visual-only": "Primarily a visual experience — ask about audio or tactile alternatives on site.",
+    "low-light": "Low-light venue — ask staff for assistance or a guided option.",
+    "uneven-terrain": "Uneven ground — a companion or guide is advisable here.",
+  },
+  hearing: { "audio-only": "Primarily an audio experience — ask for written or visual guides on site." },
+  cognitive: { crowded: "Can get crowded — visit at opening time for a calmer experience.", loud: "Loud venue — consider a shorter visit or quieter hours." },
+  "sensory-sensitive": { crowded: "Can get crowded — visit at opening time for a calmer experience.", loud: "Loud venue — ear protection or quieter hours recommended." },
+};
+const MEAL_RE = /\b(breakfast|brunch|lunch|dinner|snack|coffee|chai|tea|cafe|café|thali|dosa|meal)\b/i;
+const isMeal = (s: Stop) => MEAL_RE.test(s.activity);
+
+/** Why a stop is unsafe for the disclosed mobility constraint, or null when it passes. */
+function mobilityConflict(stop: Stop, mobility: string): string | null {
+  if (mobility !== "wheelchair" && mobility !== "limited-mobility") return null;
+  if (stop.intensity === "high") return "high-intensity";
+  if (mobility === "wheelchair" && stop.accessibilityFlags?.wheelchairAccessible === false) return "not wheelchair-accessible";
+  const blocked = mobility === "wheelchair" ? WHEELCHAIR_BLOCKED : LIMITED_BLOCKED;
+  const hit = (stop.accessibilityRisk ?? []).find((r) => blocked.includes(r));
+  return hit ?? null;
+}
+
+const SAFE_SUBSTITUTES = [
+  "Accessible alternative: relaxed time at a step-free café or viewpoint nearby",
+  "Accessible alternative: scenic drive or seated local experience in the same area",
+  "Accessible alternative: ground-level heritage or craft visit close by",
+];
+
+/**
+ * Hard filter: strips activities that violate the profile's mobility constraint and swaps in a
+ * low-risk placeholder (never an empty slot); adds accommodation notes for sensory needs.
+ * Runs on every generated AND refined day so the plan can never drift back into unsafe stops.
+ */
+export function enforceProfile(days: DayPlan[], profile: ProfileObj | null | undefined): DayPlan[] {
+  const a = profile?.accessibility;
+  if (!a) return days;
+  const mobility = a.mobility;
+  const sensory = a.sensory;
+  let swaps = 0;
+  return days.map((day) => ({
+    ...day,
+    slots: day.slots.map((slot) => {
+      const stops = slot.stops.map((stop): Stop => {
+        let next = stop;
+        const conflict = mobilityConflict(stop, mobility);
+        if (conflict) {
+          swaps++;
+          const sub = SAFE_SUBSTITUTES[swaps % SAFE_SUBSTITUTES.length]!;
+          next = {
+            activity: isMeal(stop) ? `${stop.activity} (ask for step-free seating)` : sub,
+            why: isMeal(stop)
+              ? stop.why
+              : `Replaced "${stop.activity}" — flagged ${conflict}, which conflicts with your ${mobility.replace("-", " ")} profile.`,
+            travelTimeFromPrevious: stop.travelTimeFromPrevious,
+            optional: stop.optional,
+            intensity: "low",
+            accessibilityRisk: undefined,
+            petFriendly: stop.petFriendly,
+            replacedForSafety: stop.activity,
+            accessibilityFlags: {
+              wheelchairAccessible: "unconfirmed",
+              dietaryMatch: stop.accessibilityFlags?.dietaryMatch,
+              note: "Auto-substituted for safety — pick a specific accessible venue nearby.",
+            },
+          };
+        }
+        if (sensory.length) {
+          const notes: string[] = [];
+          for (const need of sensory) {
+            const map = SENSORY_NOTES[need];
+            if (!map) continue;
+            for (const r of next.accessibilityRisk ?? []) {
+              const n = map[r];
+              if (n && !notes.includes(n) && !(next.accessibilityFlags?.note ?? "").includes(n)) notes.push(n);
+            }
+          }
+          if (notes.length) {
+            const existing = next.accessibilityFlags?.note?.trim();
+            next = {
+              ...next,
+              accessibilityFlags: {
+                wheelchairAccessible: next.accessibilityFlags?.wheelchairAccessible ?? "unconfirmed",
+                dietaryMatch: next.accessibilityFlags?.dietaryMatch,
+                note: [existing, ...notes].filter(Boolean).join(" "),
+              },
+            };
+          }
+        }
+        return next;
+      });
+      return { ...slot, stops };
+    }),
+  }));
 }
 
 function toDay(d: z.infer<typeof daySchema>, index: number, days: number, destination: string) {
@@ -506,7 +661,9 @@ export const parseGenerateInput = (input: unknown): GenerateInput => {
 export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan> {
     const originLine = data.origin
       ? `\nThe traveller is departing from: ${data.origin}. Use it as the origin and set needs_origin to false.`
-      : "";
+      : data.defaultOrigin
+        ? `\nThe traveller's saved default departure city is ${data.defaultOrigin}. Use it as the origin (needs_origin false) UNLESS the prompt itself names a different starting city, in which case the prompt wins.`
+        : "";
 
     const travelerLine =
       typeof data.travelerCount === "number" && data.travelerCount >= 1
@@ -542,7 +699,7 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
 
     const raw = await parseWithRepair(planSchema, text, "plan");
 
-    const origin = data.origin?.trim() || raw.origin?.trim() || null;
+    const origin = data.origin?.trim() || raw.origin?.trim() || data.defaultOrigin?.trim() || null;
     const validCount = (v: unknown) =>
       typeof v === "number" && Number.isFinite(v) && v >= 1
         ? Math.min(MAX_TRAVELERS, Math.round(v))
@@ -573,7 +730,10 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
       .map(({ d }) => d)
       .slice(0, days);
     while (ordered.length < days) ordered.push(fillerDay());
-    const itinerary = ordered.map((d, i) => toDay(d, i, days, raw.destination));
+    const itinerary = enforceProfile(
+      ordered.map((d, i) => toDay(d, i, days, raw.destination)),
+      data.profile ?? undefined,
+    );
 
     // Derive an end date from the start when the model didn't give one.
     if (startDateOut && !endDateOut) {
@@ -654,6 +814,7 @@ const currentPlanSchema = z.object({
         .default([]),
       recommendedMode: z.string().default(""),
       recommendedReason: z.string().default(""),
+      selectedMode: optStr,
     })
     .default({ modes: [], recommendedMode: "", recommendedReason: "" }),
   itinerary: z.array(
@@ -681,6 +842,10 @@ const currentPlanSchema = z.object({
                     })
                     .nullable()
                     .optional(),
+                  intensity: intensitySchema,
+                  accessibilityRisk: riskListSchema.optional(),
+                  petFriendly: triState,
+                  replacedForSafety: optStr,
                 }),
               )
               .default([]),
@@ -714,6 +879,8 @@ const RefineInput = z.object({
     .max(200)
     .default([]),
   profile: ProfileInput,
+  /** Transport switch: the mode the traveller tapped (scoped refine, no itinerary regeneration). */
+  selectedMode: z.enum(["flight", "train", "bus", "own_vehicle"]).nullable().optional(),
   plan: currentPlanSchema.superRefine((p, ctx) => {
     if (p.itinerary.length > MAX_DAYS)
       ctx.addIssue({ code: "custom", message: "Too many itinerary days" });
@@ -761,6 +928,7 @@ function toRefineContext(p: z.infer<typeof currentPlanSchema>) {
       })),
       recommended_mode: p.transport.recommendedMode,
       recommended_reason: p.transport.recommendedReason,
+      selected_mode: p.transport.selectedMode ?? p.transport.recommendedMode,
     },
     stay_options: p.stayOptions.map((s) => ({
       name: s.name,
@@ -781,6 +949,9 @@ function toRefineContext(p: z.infer<typeof currentPlanSchema>) {
             why: s.why ?? "",
             travel_time_from_previous: i > 0 ? (s.travelTimeFromPrevious ?? "") : "",
             optional: s.optional === true,
+            ...(s.intensity ? { intensity: s.intensity } : {}),
+            accessibility_risk: s.accessibilityRisk ?? [],
+            ...(s.petFriendly !== undefined ? { pet_friendly: s.petFriendly } : {}),
             ...(s.accessibilityFlags
               ? {
                   accessibility_flags: {
@@ -804,13 +975,7 @@ function toRefineContext(p: z.infer<typeof currentPlanSchema>) {
   };
 }
 
-const refineStopSchema = z.object({
-  activity: z.string(),
-  why: z.string().nullable().optional(),
-  travel_time_from_previous: z.string().nullable().optional(),
-  optional: z.boolean().nullable().optional(),
-  accessibility_flags: accessibilityFlagsSchema,
-});
+const refineStopSchema = stopSchema;
 
 const refineBlockSchema = z.object({
   stops: z.array(refineStopSchema).default([]),
@@ -892,7 +1057,7 @@ Patch shape (include ONLY the keys you changed; omit the rest entirely):
  "itinerary_days"?:[{"day":number,"early_morning":BLOCK,"morning":BLOCK,"afternoon":BLOCK,"evening":BLOCK}],
  "budget_breakdown"?:{"stay":number,"transit":number,"meals":number,"activities":number},
  "budget_total"?:number}
-BLOCK = {"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean,"accessibility_flags":{"wheelchair_accessible":boolean|"unconfirmed","dietary_match":boolean|"unconfirmed","note":string}}],"time_range":string,"overpacked":boolean}
+BLOCK = ${BLOCK_SHAPE}
 
 Editing operations — perform exactly what is asked and nothing more:
 - MODIFY: change specific stops/blocks/days in place. Return each touched day IN FULL (all four blocks) with its original "day" number, keeping every untouched stop in that day word-for-word.
@@ -908,7 +1073,9 @@ Quality rules for any day you return:
 - Keep a specific breakfast, lunch and dinner naming a real place plus the local dish in "why"; stated dietary/cuisine preferences override the local default.
 - Density follows the traveller's pace: calm → 1 stop per block, default → 1-2, adventurous → up to 3-4 where realistic. Every stop after the first needs "travel_time_from_previous" ("12 min walk"); the first uses "". Set "overpacked": true only when stops plus travel exceed time_range.
 - Stay consistent with the rest of the plan: same destination, origin, dates, traveler count, per-person budget, style and trip_preference.
-- If a TRAVELLER PROFILE block is present it is a hard constraint: meals must match dietary.type and avoid every allergy; with mobility "wheelchair" suggest only wheelchair-accessible stays/activities and mark anything unverified as "wheelchair_accessible": "unconfirmed" with a "note" rather than silently including it. Fill "accessibility_flags" on every stop you return when a profile is present.
+- Every stop you return carries "intensity" and "accessibility_risk" (tags only from: ${RISK_VOCAB}).
+- If a TRAVELLER PROFILE block is present it is a hard constraint: meals must match dietary.type and avoid every allergy; with mobility "wheelchair" or "limited-mobility" NEVER return a stop with intensity "high" or a conflicting accessibility_risk (wheelchair: uneven-terrain, long-walking-distance, climbing, stairs, water-based; limited-mobility: climbing, stairs, long-walking-distance) — substitute a comparable lower-risk activity in the same slot. Mark anything unverified as "wheelchair_accessible": "unconfirmed" with a "note" rather than silently including it. Sensory needs get a "note", not removal. With a pet, fill "pet_friendly" (true only when confident, else "unconfirmed" or false with a note), keep stays pet-friendly and mention pet policy in transport notes. Fill "accessibility_flags" on every stop you return when a profile is present.
+- TRANSPORT SWITCH requests ("the traveller selected <mode>"): return "transport" with the SAME available_modes set (refresh figures only if clearly wrong) and the recommended_mode/recommended_reason UNCHANGED, plus "budget_breakdown" whose "transit" reflects the selected mode's per-person round-trip cost (midpoint of its low/high) plus local getting-around costs, and "budget_total" if the total moved. Do not touch stays or itinerary.
 
 Meta fields:
 - "changed": exactly the sections you returned, using "day:<n>" for days.
@@ -937,10 +1104,14 @@ export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePa
       : `No sections were explicitly marked — infer the narrowest scope from the request text and change nothing else.`) +
     stopScope;
 
+  const selected = data.selectedMode ?? null;
+  const switchLine = selected
+    ? `\nTRANSPORT SWITCH: the traveller selected "${selected}" as their travel mode. Apply the TRANSPORT SWITCH rule (same modes, recommendation unchanged, recalculated budget_breakdown).`
+    : "";
   const context = toRefineContext(data.plan);
   const text = await callAi(
     REFINE_SYSTEM,
-    `CURRENT PLAN (latest version, source of truth):\n${JSON.stringify(context)}${profileBlock(data.profile ?? undefined)}\n\nTRAVELLER'S CHANGE REQUEST: ${data.request}\n${scopeLine}\n\nReturn ONLY the raw JSON patch object.`,
+    `CURRENT PLAN (latest version, source of truth):\n${JSON.stringify(context)}${profileBlock(data.profile ?? undefined)}\n\nTRAVELLER'S CHANGE REQUEST: ${data.request}\n${scopeLine}${switchLine}\n\nReturn ONLY the raw JSON patch object.`,
     "refine",
     "Couldn't apply that change — try rephrasing.",
   );
@@ -960,6 +1131,38 @@ export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePa
       recommendedReason: raw.transport.recommended_reason,
     };
     ensureChanged("transport");
+  }
+  if (selected) {
+    // A switch is deterministic on our side: the tapped mode must survive whatever the model did,
+    // the recommendation never moves, and the modes list falls back to the current one if the
+    // model dropped the selected mode.
+    const baseModes = data.plan.transport.modes.filter((m): m is typeof m & { mode: TransportModeId } =>
+      ["flight", "train", "bus", "own_vehicle"].includes(m.mode),
+    );
+    const candidate = patch.transport?.modes.some((m) => m.mode === selected) ? patch.transport.modes : null;
+    const modes =
+      candidate ??
+      baseModes.map((m) => ({ ...m, label: MODE_LABELS[m.mode] ?? m.mode }));
+    if (modes.some((m) => m.mode === selected)) {
+      patch.transport = {
+        modes,
+        recommendedMode: data.plan.transport.recommendedMode || pickRecommended(modes, ""),
+        recommendedReason: data.plan.transport.recommendedReason,
+        selectedMode: selected,
+      };
+      ensureChanged("transport");
+      if (!raw.budget_breakdown) {
+        // Model skipped the numbers → recompute transit locally from the selected mode.
+        const pick = modes.find((m) => m.mode === selected)!;
+        const cur = Object.fromEntries(data.plan.budgetBreakdown.map((b) => [b.label.toLowerCase(), b.amount]));
+        raw.budget_breakdown = {
+          stay: cur["stay"] ?? 0,
+          transit: Math.round((pick.min + pick.max) / 2),
+          meals: cur["meals"] ?? 0,
+          activities: cur["activities"] ?? 0,
+        };
+      }
+    }
   }
   if (raw.stay_options) {
     patch.stayOptions = toStays(raw.stay_options);
@@ -992,7 +1195,10 @@ export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePa
     // Out-of-range days are dropped; duplicate day numbers keep the last version the model sent.
     const byDay = new Map<number, (typeof days)[number]>();
     for (const d of days) if (d.day >= 1 && d.day <= totalDays) byDay.set(d.day, d);
-    patch.itineraryDays = [...byDay.values()].sort((a, b) => a.day - b.day);
+    patch.itineraryDays = enforceProfile(
+      [...byDay.values()].sort((a, b) => a.day - b.day),
+      data.profile ?? undefined,
+    );
     for (const d of patch.itineraryDays) ensureChanged(`day:${d.day}`);
   }
   if (typeof raw.budget_total === "number" && raw.budget_total > 0) {
