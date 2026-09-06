@@ -8,6 +8,32 @@ const MAX_DAYS = 31;
 const MAX_TRAVELERS = 50;
 const isoDate = z.string().regex(ISO_DATE, "Expected YYYY-MM-DD");
 
+const tag = z.string().trim().max(40);
+/** Structured traveller profile (accessibility + dietary). Both halves independently nullable. */
+const ProfileInput = z
+  .object({
+    accessibility: z
+      .object({
+        mobility: z.enum(["none", "limited-mobility", "wheelchair"]),
+        sensory: z.array(tag).max(12).default([]),
+        service_animal: z.boolean().default(false),
+        notes: z.string().trim().max(300).default(""),
+      })
+      .nullable()
+      .optional(),
+    dietary: z
+      .object({
+        type: z.enum(["none", "vegetarian", "vegan", "jain", "halal", "kosher"]),
+        allergies: z.array(tag).max(12).default([]),
+        notes: z.string().trim().max(300).default(""),
+      })
+      .nullable()
+      .optional(),
+  })
+  .nullable()
+  .optional();
+type ProfileInputType = z.infer<typeof ProfileInput>;
+
 // Bounded, so an abusive client can't ship megabytes into the model prompt.
 const Input = z.object({
   prompt: z.string().trim().min(1).max(2000),
@@ -18,6 +44,7 @@ const Input = z.object({
   endDate: isoDate.nullable().optional(),
   /** Client's local calendar date — the server clock may be in a different timezone. */
   today: isoDate.nullable().optional(),
+  profile: ProfileInput,
 });
 
 const money = z.number().finite();
@@ -30,12 +57,66 @@ const modeSchema = z.object({
   notes: z.string(),
 });
 
+// Model may emit true/false/"unconfirmed" or drift to strings like "yes"/"unknown".
+const triState = z.preprocess((v) => {
+  if (v === true || v === false || v === "unconfirmed") return v;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    if (["true", "yes", "accessible"].includes(s)) return true;
+    if (["false", "no", "not accessible", "inaccessible"].includes(s)) return false;
+    if (s) return "unconfirmed";
+  }
+  return undefined;
+}, z.union([z.boolean(), z.literal("unconfirmed")]).optional());
+
+const accessibilityFlagsSchema = z
+  .object({
+    wheelchair_accessible: triState,
+    dietary_match: triState,
+    note: z.string().nullable().optional(),
+  })
+  .nullable()
+  .optional();
+
 const stopSchema = z.object({
   activity: z.string(),
   why: z.string().nullable().optional(),
   travel_time_from_previous: z.string().nullable().optional(),
   optional: z.boolean().nullable().optional(),
+  accessibility_flags: accessibilityFlagsSchema,
 });
+
+/** Structured profile → a clear instruction block for the model (only when something is set). */
+function profileBlock(profile: ProfileInputType | undefined): string {
+  if (!profile) return "";
+  const lines: string[] = [];
+  const d = profile.dietary;
+  if (d && (d.type !== "none" || d.allergies.length || d.notes)) {
+    lines.push(
+      `DIETARY (hard constraint): type=${d.type}; allergies=${d.allergies.length ? JSON.stringify(d.allergies) : "none"}${d.notes ? `; notes="${d.notes}"` : ""}.`,
+    );
+  }
+  const a = profile.accessibility;
+  if (a && (a.mobility !== "none" || a.sensory.length || a.service_animal || a.notes)) {
+    lines.push(
+      `ACCESSIBILITY (hard constraint): mobility=${a.mobility}; sensory=${a.sensory.length ? JSON.stringify(a.sensory) : "none"}; service_animal=${a.service_animal}${a.notes ? `; notes="${a.notes}"` : ""}.`,
+    );
+  }
+  if (!lines.length) return "";
+  return `\n\nTRAVELLER PROFILE (structured, applies to the whole plan):\n${lines.join("\n")}\nApply the profile rules from the system message and fill "accessibility_flags" on every stop.`;
+}
+
+function toFlags(f: z.infer<typeof accessibilityFlagsSchema>) {
+  if (!f) return undefined;
+  const wc = f.wheelchair_accessible;
+  const dm = f.dietary_match;
+  if (wc === undefined && dm === undefined) return undefined;
+  return {
+    wheelchairAccessible: wc ?? ("unconfirmed" as const),
+    dietaryMatch: dm,
+    note: f.note?.trim() || undefined,
+  };
+}
 
 const blockSchema = z.object({
   stops: z.array(stopSchema).max(20),
