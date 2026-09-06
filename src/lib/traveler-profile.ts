@@ -25,9 +25,23 @@ export type DietaryProfile = {
   notes: string;
 };
 
+export const PET_TYPES = ["dog", "cat", "small-pet", "other"] as const;
+export type PetType = (typeof PET_TYPES)[number];
+export const PET_SIZES = ["small", "medium", "large"] as const;
+export type PetSize = (typeof PET_SIZES)[number];
+
+export type PetProfile = {
+  traveling: boolean;
+  type: PetType | null;
+  size: PetSize | null;
+  notes: string;
+};
+
 export type TravelerProfile = {
+  startingPoint: string | null;
   accessibility: AccessibilityProfile | null;
   dietary: DietaryProfile | null;
+  pet: PetProfile | null;
   updatedAt: string;
 };
 
@@ -36,6 +50,19 @@ export const PROFILE_STORAGE_KEY = "explorion.traveler-profile";
 export const MAX_NOTES = 300;
 export const MAX_TAGS = 12;
 export const MAX_TAG_LEN = 40;
+export const MAX_ORIGIN_LEN = 80;
+
+export const PET_TYPE_LABELS: Record<PetType, string> = {
+  dog: "Dog",
+  cat: "Cat",
+  "small-pet": "Small pet (rabbit, bird…)",
+  other: "Other",
+};
+export const PET_SIZE_LABELS: Record<PetSize, string> = {
+  small: "Small (under 8 kg)",
+  medium: "Medium (8–25 kg)",
+  large: "Large (25 kg+)",
+};
 
 export const MOBILITY_LABELS: Record<Mobility, string> = {
   none: "No mobility needs",
