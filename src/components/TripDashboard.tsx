@@ -24,6 +24,7 @@ import {
   Stamp,
   AlertTriangle,
   Clock,
+  Accessibility,
 } from "lucide-react";
 import {
   formatINR,
@@ -508,6 +509,41 @@ export function TripDashboard({
                                         <p className="mt-0.5 text-[11px] italic opacity-60">
                                           why: {stop.why}
                                         </p>
+                                      ) : null}
+                                      {stop.accessibilityFlags ? (
+                                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                          {stop.accessibilityFlags.wheelchairAccessible === "unconfirmed" ? (
+                                            <span
+                                              title={stop.accessibilityFlags.note || "Accessibility could not be confirmed — check before you go"}
+                                              className="inline-flex items-center gap-1 rounded-full border border-primary/60 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-primary"
+                                            >
+                                              <AlertTriangle className="size-2.5" /> Access unconfirmed
+                                            </span>
+                                          ) : stop.accessibilityFlags.wheelchairAccessible === false ? (
+                                            <span
+                                              title={stop.accessibilityFlags.note || "Not wheelchair-accessible"}
+                                              className="inline-flex items-center gap-1 rounded-full border border-destructive/60 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-destructive"
+                                            >
+                                              <AlertTriangle className="size-2.5" /> Not accessible
+                                            </span>
+                                          ) : (
+                                            <span className="inline-flex items-center gap-1 rounded-full bg-current/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide opacity-60">
+                                              <Accessibility className="size-2.5" /> Accessible
+                                            </span>
+                                          )}
+                                          {stop.accessibilityFlags.dietaryMatch === "unconfirmed" ? (
+                                            <span className="rounded-full border border-primary/60 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-primary">
+                                              Diet unconfirmed
+                                            </span>
+                                          ) : stop.accessibilityFlags.dietaryMatch === false ? (
+                                            <span className="rounded-full border border-destructive/60 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-destructive">
+                                              Diet conflict
+                                            </span>
+                                          ) : null}
+                                          {stop.accessibilityFlags.note ? (
+                                            <span className="text-[10px] italic opacity-60">{stop.accessibilityFlags.note}</span>
+                                          ) : null}
+                                        </div>
                                       ) : null}
                                     </div>
                                     );

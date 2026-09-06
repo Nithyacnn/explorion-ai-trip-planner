@@ -31,6 +31,16 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const isoDate = (v: unknown): string | null =>
   typeof v === "string" && ISO_DATE.test(v.trim()) ? v.trim() : null;
 
+const tri = (v: unknown): boolean | "unconfirmed" | undefined =>
+  v === true || v === false || v === "unconfirmed" ? v : undefined;
+const accessFlags = (v: unknown) => {
+  const f = obj(v);
+  const wc = tri(f["wheelchairAccessible"]);
+  const dm = tri(f["dietaryMatch"]);
+  if (wc === undefined && dm === undefined) return undefined;
+  return { wheelchairAccessible: wc ?? "unconfirmed", dietaryMatch: dm, note: optStr(f["note"]) };
+};
+
 export function normalizePlan(value: unknown): TripPlan | null {
   const p = obj(value);
   const destination = str(p["destination"]).trim();
@@ -60,6 +70,7 @@ export function normalizePlan(value: unknown): TripPlan | null {
                   why: optStr(x["why"]),
                   travelTimeFromPrevious: optStr(x["travelTimeFromPrevious"]),
                   optional: x["optional"] === true,
+                  accessibilityFlags: accessFlags(x["accessibilityFlags"]),
                 })),
             };
           }),

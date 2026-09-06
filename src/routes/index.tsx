@@ -14,12 +14,22 @@ import {
   CalendarDays,
   Trash2,
   AlertTriangle,
+  Accessibility,
 } from "lucide-react";
 import { toast } from "sonner";
 import { generateTripPlan, refineTripPlan } from "@/lib/trip-ai.functions";
 import { destinationVibe, formatINR, type TripPlan } from "@/lib/trip-planner";
 import { TripDashboard } from "@/components/TripDashboard";
+import { TravelerProfileEditor } from "@/components/TravelerProfileEditor";
 import { loadSavedTrips, removeSavedTrip, restoreSavedTrip, saveTrip, type SavedTrip } from "@/lib/saved-trips";
+import {
+  clearTravelerProfile,
+  loadTravelerProfile,
+  saveTravelerProfile,
+  summarizeProfile,
+  toProfileWire,
+  type TravelerProfile,
+} from "@/lib/traveler-profile";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -108,7 +118,6 @@ const PREFERENCE_CHIPS = [
   "Take me somewhere unexplored",
   "Keep it calm, minimal travel between stops",
   "Make it adventurous",
-  "I have food or stay preferences",
 ];
 
 function Home() {
@@ -129,6 +138,41 @@ function Home() {
   const [askingPreference, setAskingPreference] = useState(false);
   const [preference, setPreference] = useState("");
   const [preferenceInput, setPreferenceInput] = useState("");
+
+  // Traveller profile: the saved one (localStorage) and an optional session-only override.
+  const [savedProfile, setSavedProfile] = useState<TravelerProfile | null>(null);
+  const [sessionProfile, setSessionProfile] = useState<TravelerProfile | null | undefined>(undefined);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const activeProfile = sessionProfile !== undefined ? sessionProfile : savedProfile;
+  // Ref so async generation/refine always read the profile in effect at call time.
+  const profileRef = useRef<TravelerProfile | null>(null);
+  profileRef.current = activeProfile;
+  useEffect(() => {
+    setSavedProfile(loadTravelerProfile());
+  }, []);
+
+  const handleProfileSave = (next: TravelerProfile | null, sessionOnly: boolean) => {
+    if (sessionOnly) {
+      setSessionProfile(next);
+      toast.success(next ? "Profile applied to this trip only" : "Profile turned off for this trip", {
+        description: "Your saved profile is unchanged.",
+      });
+    } else {
+      const stored = next ? saveTravelerProfile(next) : (clearTravelerProfile(), null);
+      setSavedProfile(stored);
+      setSessionProfile(undefined);
+      toast.success(stored ? "Travel profile saved" : "Travel profile cleared");
+    }
+    setProfileOpen(false);
+  };
+
+  const handleProfileClear = () => {
+    clearTravelerProfile();
+    setSavedProfile(null);
+    setSessionProfile(undefined);
+    setProfileOpen(false);
+    toast.success("Travel profile cleared", { description: "Nothing is stored on this device anymore." });
+  };
 
   const [marks, setMarks] = useState<Record<string, boolean>>({});
   const [selectedStay, setSelectedStay] = useState(0);
@@ -250,6 +294,7 @@ function Home() {
           startDate: dates.start,
           endDate: dates.end,
           today: iso(new Date()),
+          profile: toProfileWire(profileRef.current),
         },
       });
       if (import.meta.env.DEV) {
@@ -408,7 +453,9 @@ function Home() {
     try {
       // Send the LATEST plan (never a stale closure) and strip debug-only fields.
       const { debugRaw: _debug, ...snapshot } = basePlan as TripPlan & { debugRaw?: unknown };
-      const patch = await askRefine({ data: { request, scope, stops, plan: snapshot } });
+      const patch = await askRefine({
+        data: { request, scope, stops, plan: snapshot, profile: toProfileWire(profileRef.current) },
+      });
       if (import.meta.env.DEV) console.log("[Explorion] refinement patch:", patch);
       // A newer refine or a fresh generation superseded this one — drop it.
       if (requestId !== refineSeq.current || planRef.current !== basePlan) return;
@@ -662,6 +709,16 @@ function Home() {
           </div>
         </section>
 
+        {profileOpen ? (
+          <TravelerProfileEditor
+            initial={activeProfile}
+            hasSavedProfile={!!savedProfile}
+            onSave={handleProfileSave}
+            onClear={handleProfileClear}
+            onClose={() => setProfileOpen(false)}
+          />
+        ) : null}
+
         {askingPreference ? (
           <section className="panel-navy mt-6 space-y-4 p-8">
             <div>
@@ -683,6 +740,29 @@ function Home() {
                   {chip}
                 </button>
               ))}
+              {activeProfile ? (
+                <button
+                  type="button"
+                  onClick={() => setProfileOpen(true)}
+                  title="Edit my travel profile"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-primary/60 bg-primary/10 px-4 py-2 text-xs text-foreground transition hover:border-primary"
+                >
+                  <Accessibility className="size-3.5 text-primary" />
+                  {summarizeProfile(activeProfile).join(" · ")}
+                  {sessionProfile !== undefined ? (
+                    <span className="opacity-60">(this trip)</span>
+                  ) : null}
+                  <span className="font-semibold text-primary">✓ Edit</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setProfileOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-xs text-muted-foreground transition hover:border-primary hover:text-primary"
+                >
+                  <Accessibility className="size-3.5" /> My travel profile
+                </button>
+              )}
             </div>
             <textarea
               rows={2}

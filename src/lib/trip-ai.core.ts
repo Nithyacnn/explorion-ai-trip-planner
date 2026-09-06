@@ -8,6 +8,32 @@ const MAX_DAYS = 31;
 const MAX_TRAVELERS = 50;
 const isoDate = z.string().regex(ISO_DATE, "Expected YYYY-MM-DD");
 
+const tag = z.string().trim().max(40);
+/** Structured traveller profile (accessibility + dietary). Both halves independently nullable. */
+const ProfileInput = z
+  .object({
+    accessibility: z
+      .object({
+        mobility: z.enum(["none", "limited-mobility", "wheelchair"]),
+        sensory: z.array(tag).max(12).default([]),
+        service_animal: z.boolean().default(false),
+        notes: z.string().trim().max(300).default(""),
+      })
+      .nullable()
+      .optional(),
+    dietary: z
+      .object({
+        type: z.enum(["none", "vegetarian", "vegan", "jain", "halal", "kosher"]),
+        allergies: z.array(tag).max(12).default([]),
+        notes: z.string().trim().max(300).default(""),
+      })
+      .nullable()
+      .optional(),
+  })
+  .nullable()
+  .optional();
+type ProfileInputType = z.infer<typeof ProfileInput>;
+
 // Bounded, so an abusive client can't ship megabytes into the model prompt.
 const Input = z.object({
   prompt: z.string().trim().min(1).max(2000),
@@ -18,6 +44,7 @@ const Input = z.object({
   endDate: isoDate.nullable().optional(),
   /** Client's local calendar date — the server clock may be in a different timezone. */
   today: isoDate.nullable().optional(),
+  profile: ProfileInput,
 });
 
 const money = z.number().finite();
@@ -30,12 +57,66 @@ const modeSchema = z.object({
   notes: z.string(),
 });
 
+// Model may emit true/false/"unconfirmed" or drift to strings like "yes"/"unknown".
+const triState = z.preprocess((v) => {
+  if (v === true || v === false || v === "unconfirmed") return v;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    if (["true", "yes", "accessible"].includes(s)) return true;
+    if (["false", "no", "not accessible", "inaccessible"].includes(s)) return false;
+    if (s) return "unconfirmed";
+  }
+  return undefined;
+}, z.union([z.boolean(), z.literal("unconfirmed")]).optional());
+
+const accessibilityFlagsSchema = z
+  .object({
+    wheelchair_accessible: triState,
+    dietary_match: triState,
+    note: z.string().nullable().optional(),
+  })
+  .nullable()
+  .optional();
+
 const stopSchema = z.object({
   activity: z.string(),
   why: z.string().nullable().optional(),
   travel_time_from_previous: z.string().nullable().optional(),
   optional: z.boolean().nullable().optional(),
+  accessibility_flags: accessibilityFlagsSchema,
 });
+
+/** Structured profile → a clear instruction block for the model (only when something is set). */
+function profileBlock(profile: ProfileInputType | undefined): string {
+  if (!profile) return "";
+  const lines: string[] = [];
+  const d = profile.dietary;
+  if (d && (d.type !== "none" || d.allergies.length || d.notes)) {
+    lines.push(
+      `DIETARY (hard constraint): type=${d.type}; allergies=${d.allergies.length ? JSON.stringify(d.allergies) : "none"}${d.notes ? `; notes="${d.notes}"` : ""}.`,
+    );
+  }
+  const a = profile.accessibility;
+  if (a && (a.mobility !== "none" || a.sensory.length || a.service_animal || a.notes)) {
+    lines.push(
+      `ACCESSIBILITY (hard constraint): mobility=${a.mobility}; sensory=${a.sensory.length ? JSON.stringify(a.sensory) : "none"}; service_animal=${a.service_animal}${a.notes ? `; notes="${a.notes}"` : ""}.`,
+    );
+  }
+  if (!lines.length) return "";
+  return `\n\nTRAVELLER PROFILE (structured, applies to the whole plan):\n${lines.join("\n")}\nApply the profile rules from the system message and fill "accessibility_flags" on every stop.`;
+}
+
+function toFlags(f: z.infer<typeof accessibilityFlagsSchema>) {
+  if (!f) return undefined;
+  const wc = f.wheelchair_accessible;
+  const dm = f.dietary_match;
+  if (wc === undefined && dm === undefined) return undefined;
+  return {
+    wheelchairAccessible: wc ?? ("unconfirmed" as const),
+    dietaryMatch: dm,
+    note: f.note?.trim() || undefined,
+  };
+}
 
 const blockSchema = z.object({
   stops: z.array(stopSchema).max(20),
@@ -118,7 +199,7 @@ const planSchema = z.object({
   }),
 });
 
-const BLOCK_SHAPE = `{"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean}],"time_range":string,"overpacked":boolean}`;
+const BLOCK_SHAPE = `{"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean,"accessibility_flags":{"wheelchair_accessible":boolean|"unconfirmed","dietary_match":boolean|"unconfirmed","note":string}}],"time_range":string,"overpacked":boolean}`;
 
 const VISA_SHAPE = `{"required":boolean,"type":"not_required"|"visa_on_arrival"|"e_visa"|"advance_visa","estimated_cost":{"low":number,"high":number,"currency":string},"processing_time":string,"apply_by":string,"how_to_apply":string,"notes":string}`;
 
@@ -178,7 +259,15 @@ Trip preference shaping (apply ALL signals present, combined):
 - Calm / relaxed / slow: fewer, lighter activities ("Free time / rest" where appropriate), no multi-location day trips, cluster everything in one area.
 - Adventurous / active: prioritise outdoor and activity-based items.
 - Food or stay preferences: meals and every stay option MUST match; never conflict with a stated preference.
-- If trip_preference is empty, produce a balanced default plan.`;
+- If trip_preference is empty, produce a balanced default plan.
+
+Traveller profile rules (when a TRAVELLER PROFILE block is present in the request — these override every other preference):
+- Dietary: every meal stop, alternate pick and food-themed activity MUST match dietary.type (vegetarian = no meat/fish/egg dishes; vegan = no animal products; jain = no meat, egg, onion, garlic or root vegetables; halal / kosher = certified or clearly compliant venues). Never suggest any dish or venue built around an item in dietary.allergies; when a local speciality conflicts, replace it with a compliant local dish and say so in "why". Set "dietary_match": true on compliant meal stops, false only if unavoidable and clearly warned in "why", "unconfirmed" when you cannot verify the venue.
+- Accessibility, mobility = "wheelchair": suggest ONLY stays and activities that are wheelchair-accessible (step-free entry, lifts, accessible rooms/transport). No treks, stair-only forts, boat boarding without ramps, or dune/beach walks without boardwalks. If you cannot confirm a stop is wheelchair-accessible, either drop it or keep it with "wheelchair_accessible": "unconfirmed" and a short "note" saying what to check — NEVER silently include it. Every stay option's "why" must state its accessibility. Prefer the flattest, shortest travel between stops.
+- mobility = "limited-mobility": avoid long walks, steep climbs and many stairs; keep travel between stops short; flag stops with significant walking via "note".
+- sensory needs: visual → guided/audio-described experiences, avoid unmarked terrain; hearing → visual-guided options, note where guides are audio-only; cognitive / sensory-sensitive → calmer, less crowded slots, avoid loud or chaotic venues, keep the day structured.
+- service_animal = true: only stays and venues that admit service animals; note where policy is unclear.
+- Fill "accessibility_flags" on EVERY stop when a profile is present: {"wheelchair_accessible": true|false|"unconfirmed", "dietary_match": true|false|"unconfirmed" (meals only; omit for non-food stops), "note": string (empty when nothing to flag)}. When no profile is present omit accessibility_flags entirely.`;
 
 const SLOT_TAGS = ["06:00 – 09:00", "09:00 – 13:00", "13:00 – 17:00", "17:00 – 22:00"];
 const SLOT_LABELS = ["Early morning", "Morning", "Afternoon", "Evening"];
@@ -295,6 +384,7 @@ function toSlots(d: z.infer<typeof daySchema>) {
         travelTimeFromPrevious:
           i > 0 ? s.travel_time_from_previous?.trim() || undefined : undefined,
         optional: s.optional === true,
+        accessibilityFlags: toFlags(s.accessibility_flags),
       })),
   })).map((slot, j) =>
     slot.stops.length
@@ -443,9 +533,10 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
         }. Use them as travel_dates and set needs_dates to false.`
       : "";
 
+    const profileLine = profileBlock(data.profile ?? undefined);
     const text = await callAi(
       SYSTEM,
-      `${data.prompt}${originLine}${travelerLine}${datesLine}${preferenceLine}\nTODAY'S DATE is ${today} — resolve every relative date against it.\nAny budget figure in the prompt is PER PERSON.\n\nReturn ONLY the raw JSON object described in the system message.`,
+      `${data.prompt}${originLine}${travelerLine}${datesLine}${preferenceLine}${profileLine}\nTODAY'S DATE is ${today} — resolve every relative date against it.\nAny budget figure in the prompt is PER PERSON.\n\nReturn ONLY the raw JSON object described in the system message.`,
       "plan",
     );
 
@@ -582,6 +673,14 @@ const currentPlanSchema = z.object({
                   why: optStr,
                   travelTimeFromPrevious: optStr,
                   optional: z.boolean().nullable().optional(),
+                  accessibilityFlags: z
+                    .object({
+                      wheelchairAccessible: z.union([z.boolean(), z.literal("unconfirmed")]).default("unconfirmed"),
+                      dietaryMatch: z.union([z.boolean(), z.literal("unconfirmed")]).nullable().optional(),
+                      note: optStr,
+                    })
+                    .nullable()
+                    .optional(),
                 }),
               )
               .default([]),
@@ -614,6 +713,7 @@ const RefineInput = z.object({
     .array(z.object({ day: z.number(), block: z.string().max(40), activity: z.string().max(600) }))
     .max(200)
     .default([]),
+  profile: ProfileInput,
   plan: currentPlanSchema.superRefine((p, ctx) => {
     if (p.itinerary.length > MAX_DAYS)
       ctx.addIssue({ code: "custom", message: "Too many itinerary days" });
@@ -681,6 +781,15 @@ function toRefineContext(p: z.infer<typeof currentPlanSchema>) {
             why: s.why ?? "",
             travel_time_from_previous: i > 0 ? (s.travelTimeFromPrevious ?? "") : "",
             optional: s.optional === true,
+            ...(s.accessibilityFlags
+              ? {
+                  accessibility_flags: {
+                    wheelchair_accessible: s.accessibilityFlags.wheelchairAccessible,
+                    ...(s.accessibilityFlags.dietaryMatch != null ? { dietary_match: s.accessibilityFlags.dietaryMatch } : {}),
+                    note: s.accessibilityFlags.note ?? "",
+                  },
+                }
+              : {}),
           })),
         };
       });
@@ -700,6 +809,7 @@ const refineStopSchema = z.object({
   why: z.string().nullable().optional(),
   travel_time_from_previous: z.string().nullable().optional(),
   optional: z.boolean().nullable().optional(),
+  accessibility_flags: accessibilityFlagsSchema,
 });
 
 const refineBlockSchema = z.object({
@@ -782,7 +892,7 @@ Patch shape (include ONLY the keys you changed; omit the rest entirely):
  "itinerary_days"?:[{"day":number,"early_morning":BLOCK,"morning":BLOCK,"afternoon":BLOCK,"evening":BLOCK}],
  "budget_breakdown"?:{"stay":number,"transit":number,"meals":number,"activities":number},
  "budget_total"?:number}
-BLOCK = {"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean}],"time_range":string,"overpacked":boolean}
+BLOCK = {"stops":[{"activity":string,"why":string,"travel_time_from_previous":string,"optional":boolean,"accessibility_flags":{"wheelchair_accessible":boolean|"unconfirmed","dietary_match":boolean|"unconfirmed","note":string}}],"time_range":string,"overpacked":boolean}
 
 Editing operations — perform exactly what is asked and nothing more:
 - MODIFY: change specific stops/blocks/days in place. Return each touched day IN FULL (all four blocks) with its original "day" number, keeping every untouched stop in that day word-for-word.
@@ -798,6 +908,7 @@ Quality rules for any day you return:
 - Keep a specific breakfast, lunch and dinner naming a real place plus the local dish in "why"; stated dietary/cuisine preferences override the local default.
 - Density follows the traveller's pace: calm → 1 stop per block, default → 1-2, adventurous → up to 3-4 where realistic. Every stop after the first needs "travel_time_from_previous" ("12 min walk"); the first uses "". Set "overpacked": true only when stops plus travel exceed time_range.
 - Stay consistent with the rest of the plan: same destination, origin, dates, traveler count, per-person budget, style and trip_preference.
+- If a TRAVELLER PROFILE block is present it is a hard constraint: meals must match dietary.type and avoid every allergy; with mobility "wheelchair" suggest only wheelchair-accessible stays/activities and mark anything unverified as "wheelchair_accessible": "unconfirmed" with a "note" rather than silently including it. Fill "accessibility_flags" on every stop you return when a profile is present.
 
 Meta fields:
 - "changed": exactly the sections you returned, using "day:<n>" for days.
@@ -829,7 +940,7 @@ export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePa
   const context = toRefineContext(data.plan);
   const text = await callAi(
     REFINE_SYSTEM,
-    `CURRENT PLAN (latest version, source of truth):\n${JSON.stringify(context)}\n\nTRAVELLER'S CHANGE REQUEST: ${data.request}\n${scopeLine}\n\nReturn ONLY the raw JSON patch object.`,
+    `CURRENT PLAN (latest version, source of truth):\n${JSON.stringify(context)}${profileBlock(data.profile ?? undefined)}\n\nTRAVELLER'S CHANGE REQUEST: ${data.request}\n${scopeLine}\n\nReturn ONLY the raw JSON patch object.`,
     "refine",
     "Couldn't apply that change — try rephrasing.",
   );
