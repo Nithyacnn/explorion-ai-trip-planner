@@ -14,6 +14,7 @@ import {
   CalendarDays,
   Trash2,
   AlertTriangle,
+  Accessibility,
 } from "lucide-react";
 import { toast } from "sonner";
 import { generateTripPlan, refineTripPlan } from "@/lib/trip-ai.functions";
@@ -293,6 +294,7 @@ function Home() {
           startDate: dates.start,
           endDate: dates.end,
           today: iso(new Date()),
+          profile: toProfileWire(profileRef.current),
         },
       });
       if (import.meta.env.DEV) {
@@ -451,7 +453,9 @@ function Home() {
     try {
       // Send the LATEST plan (never a stale closure) and strip debug-only fields.
       const { debugRaw: _debug, ...snapshot } = basePlan as TripPlan & { debugRaw?: unknown };
-      const patch = await askRefine({ data: { request, scope, stops, plan: snapshot } });
+      const patch = await askRefine({
+        data: { request, scope, stops, plan: snapshot, profile: toProfileWire(profileRef.current) },
+      });
       if (import.meta.env.DEV) console.log("[Explorion] refinement patch:", patch);
       // A newer refine or a fresh generation superseded this one — drop it.
       if (requestId !== refineSeq.current || planRef.current !== basePlan) return;
@@ -705,6 +709,16 @@ function Home() {
           </div>
         </section>
 
+        {profileOpen ? (
+          <TravelerProfileEditor
+            initial={activeProfile}
+            hasSavedProfile={!!savedProfile}
+            onSave={handleProfileSave}
+            onClear={handleProfileClear}
+            onClose={() => setProfileOpen(false)}
+          />
+        ) : null}
+
         {askingPreference ? (
           <section className="panel-navy mt-6 space-y-4 p-8">
             <div>
@@ -726,6 +740,29 @@ function Home() {
                   {chip}
                 </button>
               ))}
+              {activeProfile ? (
+                <button
+                  type="button"
+                  onClick={() => setProfileOpen(true)}
+                  title="Edit my travel profile"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-primary/60 bg-primary/10 px-4 py-2 text-xs text-foreground transition hover:border-primary"
+                >
+                  <Accessibility className="size-3.5 text-primary" />
+                  {summarizeProfile(activeProfile).join(" · ")}
+                  {sessionProfile !== undefined ? (
+                    <span className="opacity-60">(this trip)</span>
+                  ) : null}
+                  <span className="font-semibold text-primary">✓ Edit</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setProfileOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-xs text-muted-foreground transition hover:border-primary hover:text-primary"
+                >
+                  <Accessibility className="size-3.5" /> My travel profile
+                </button>
+              )}
             </div>
             <textarea
               rows={2}
