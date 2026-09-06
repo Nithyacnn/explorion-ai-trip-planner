@@ -63,10 +63,18 @@ export const Route = createFileRoute("/")({
   component: Home,
 });
 
-const CHIPS = [
+const CHIPS_WITH_ORIGIN = [
   "Weekend in Pondicherry from Chennai, 2 people, ₹12,000 per person, next weekend",
   "5 days in Manali from Delhi, solo, ₹15,000 per person, first week of December",
   "3 days in Goa from Mumbai, family of 4, ₹20,000 per person",
+];
+
+// When the profile already carries a starting point, the chips omit the origin —
+// the saved starting point fills it in automatically.
+const CHIPS_NO_ORIGIN = [
+  "Weekend in Pondicherry, 2 people, ₹12,000 per person, next weekend",
+  "5 days in Manali, solo, ₹15,000 per person, first week of December",
+  "3 days in Goa, family of 4, ₹20,000 per person",
 ];
 
 // Local calendar date (toISOString would shift to UTC and be a day off in the IST evening).
@@ -874,7 +882,7 @@ function Home() {
           ) : null}
 
           <div className="mt-5 flex flex-wrap gap-2">
-            {CHIPS.map((chip) => (
+            {(activeProfile?.startingPoint ? CHIPS_NO_ORIGIN : CHIPS_WITH_ORIGIN).map((chip) => (
               <button
                 key={chip}
                 onClick={() => setPrompt(chip)}
