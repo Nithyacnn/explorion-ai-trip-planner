@@ -37,6 +37,7 @@ import {
   type Stay,
   type TransportModeId,
   type TripPlan,
+  STAY_TYPE_LABELS,
 } from "@/lib/trip-planner";
 import { SectionBoundary } from "@/components/SectionBoundary";
 import { ShareTrip } from "@/components/ShareTrip";
@@ -663,6 +664,23 @@ export function TripDashboard({
               <p className="mt-1 text-xs opacity-70">
               Tap an option to use it in your budget. Nightly prices are the per-person share.
             </p>
+              {plan.stayTypes?.length ? (
+                <p className="mt-1 text-xs">
+                  <span className="opacity-70">Matched to your pick: </span>
+                  <span className="font-semibold">
+                    {plan.stayTypes.map((t) => STAY_TYPE_LABELS[t]).join(", ")}
+                  </span>
+                  {onEditPreference ? (
+                    <button
+                      type="button"
+                      onClick={onEditPreference}
+                      className="ml-2 underline underline-offset-2 opacity-70 hover:opacity-100"
+                    >
+                      change
+                    </button>
+                  ) : null}
+                </p>
+              ) : null}
             </div>
             <MarkToggle marked={!!marks["stay"]} onToggle={() => onToggleMark("stay")} />
           </div>

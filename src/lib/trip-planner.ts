@@ -103,6 +103,35 @@ export type VisaInfo = {
 
 export type TravelDates = { startDate: string | null; endDate: string | null };
 
+/** Property types the traveller can ask for before planning. */
+export const STAY_TYPES = [
+  "hotel",
+  "apartment",
+  "resort",
+  "holiday_home",
+  "villa",
+  "hostel",
+  "guest_house",
+  "farm_stay",
+  "bed_and_breakfast",
+  "lodge",
+  "homestay",
+] as const;
+export type StayType = (typeof STAY_TYPES)[number];
+export const STAY_TYPE_LABELS: Record<StayType, string> = {
+  hotel: "Hotels",
+  apartment: "Apartments",
+  resort: "Resorts",
+  holiday_home: "Holiday homes",
+  villa: "Villas",
+  hostel: "Hostels",
+  guest_house: "Guest houses",
+  farm_stay: "Farm stays",
+  bed_and_breakfast: "Bed and breakfasts",
+  lodge: "Lodges",
+  homestay: "Homestays",
+};
+
 export type TripPlan = {
   destination: string;
   origin: string | null;
@@ -122,6 +151,8 @@ export type TripPlan = {
   style?: string;
   vibe?: string;
   tripPreference?: string;
+  /** Property types the traveller asked for (empty = no preference). */
+  stayTypes?: StayType[];
   international?: boolean;
   visa?: VisaInfo | null;
   visaUnavailable?: boolean;

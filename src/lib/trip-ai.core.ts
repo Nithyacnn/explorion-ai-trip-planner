@@ -9,6 +9,8 @@ import {
   type Stop,
   type TripPlan,
   type TransportModeId,
+  STAY_TYPES,
+  STAY_TYPE_LABELS,
 } from "@/lib/trip-planner";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -60,6 +62,8 @@ const Input = z.object({
   defaultOrigin: z.string().trim().max(80).nullable().optional(),
   travelerCount: z.number().finite().min(1).max(MAX_TRAVELERS).nullable().optional(),
   preference: z.string().trim().max(600).nullable().optional(),
+  /** Property types the traveller picked before planning (empty = no preference). */
+  stayTypes: z.array(z.enum(STAY_TYPES)).max(STAY_TYPES.length).nullable().optional(),
   startDate: isoDate.nullable().optional(),
   endDate: isoDate.nullable().optional(),
   /** Client's local calendar date — the server clock may be in a different timezone. */
@@ -276,7 +280,8 @@ Rules:
 - transport.available_modes: ONLY include modes that genuinely exist for this origin→destination pair. Include "train"/"bus"/"own_vehicle" only when a real rail/road route exists (same country or connected region) AND the road/rail journey is under roughly 15-18 hours. For overseas or otherwise air-only routes, return ONLY the flight mode. Never fabricate a bus or train for a route that has none.
 - Each mode: low/high are realistic ROUND-TRIP per-person costs for that exact pair; "duration" is a human string like "12 hrs each way"; "notes" is one short practical line. For "own_vehicle", low/high estimate round-trip FUEL + TOLL cost for the route (not a ticket price).
 - recommended_mode must be one of the modes you returned. recommended_reason must weigh the traveller's stated style/preference and budget against cost AND duration — a genuine trade-off sentence (e.g. "flight recommended: saves 14 hours for only ₹2,000 more on a comfort-first trip"), never just "cheapest".
-- stay_options: exactly 3 realistic distinct properties that each fit within the stated budget, with name, type (hotel/homestay/resort/hostel), price_per_night, rating (0-5) and a one-line "why". Sort by rating descending.
+- stay_options: exactly 3 realistic distinct properties that each fit within the stated budget, with name, type (one of: hotel, apartment, resort, holiday home, villa, hostel, guest house, farm stay, bed and breakfast, lodge, homestay), price_per_night, rating (0-5) and a one-line "why". Sort by rating descending.
+- PREFERRED PROPERTY TYPES: when the traveller lists preferred property types, every stay_option must be one of those types, chosen so the nightly share fits budget_breakdown.stay ÷ duration_days. Spread the 3 options across the listed types where the destination genuinely offers them (e.g. one villa + two homestays). If a requested type is unrealistic for the destination or budget, say so in the "why" of the closest alternative and set agent_labels.stay accordingly — never invent a property of that type. When no types are listed, pick the best-value mix for the budget.
 - itinerary: exactly duration_days entries. Each day has FOUR blocks: early_morning (06:00 – 09:00), morning (09:00 – 13:00), afternoon (13:00 – 17:00), evening (17:00 – 22:00). Each block is an object with "stops", "time_range" and "overpacked".
 
 Full-day coverage (mandatory, all paces):
@@ -669,6 +674,13 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
         ? `\nNumber of travellers: ${Math.round(data.travelerCount)}. Use it as traveler_count and set needs_traveler_count to false.`
         : "";
 
+    const stayTypes = [...new Set(data.stayTypes ?? [])];
+    const stayTypesLine = stayTypes.length
+      ? `\nPreferred property types (stay_options must be drawn from these, matched to the budget): ${stayTypes
+          .map((t) => STAY_TYPE_LABELS[t])
+          .join(", ")}.`
+      : "";
+
     const preference = data.preference?.trim() ?? "";
     const preferenceLine = preference
       ? `\nTrip preference (free text, shape the whole plan around it): ${preference}`
@@ -692,7 +704,7 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
     const profileLine = profileBlock(data.profile ?? undefined);
     const text = await callAi(
       SYSTEM,
-      `${data.prompt}${originLine}${travelerLine}${datesLine}${preferenceLine}${profileLine}\nTODAY'S DATE is ${today} — resolve every relative date against it.\nAny budget figure in the prompt is PER PERSON.\n\nReturn ONLY the raw JSON object described in the system message.`,
+      `${data.prompt}${originLine}${travelerLine}${datesLine}${preferenceLine}${stayTypesLine}${profileLine}\nTODAY'S DATE is ${today} — resolve every relative date against it.\nAny budget figure in the prompt is PER PERSON.\n\nReturn ONLY the raw JSON object described in the system message.`,
       "plan",
     );
 
@@ -771,6 +783,7 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
         budget: raw.agent_labels.budget_breakdown,
       },
       tripPreference: preference || raw.trip_preference?.trim() || "",
+      stayTypes,
       style: raw.style,
       vibe: raw.vibe,
       debugRaw: text,
@@ -797,6 +810,7 @@ const currentPlanSchema = z.object({
   month: optStr,
   style: optStr,
   tripPreference: optStr,
+  stayTypes: z.array(z.enum(STAY_TYPES)).nullable().optional(),
   international: z.boolean().nullable().optional(),
   transport: z
     .object({
@@ -916,6 +930,7 @@ function toRefineContext(p: z.infer<typeof currentPlanSchema>) {
     month: p.month ?? "Anytime",
     style: p.style ?? "balanced",
     trip_preference: p.tripPreference ?? "",
+    preferred_stay_types: (p.stayTypes ?? []).map((t) => STAY_TYPE_LABELS[t]),
     international: p.international === true,
     transport: {
       available_modes: p.transport.modes.map((m) => ({
@@ -1071,7 +1086,7 @@ Quality rules for any day you return:
 - Four blocks: early_morning 06:00 – 09:00, morning 09:00 – 13:00, afternoon 13:00 – 17:00, evening 17:00 – 22:00. Full 06:00–22:00 coverage, no empty block, no gap over ~3 hours.
 - Keep a specific breakfast, lunch and dinner naming a real place plus the local dish in "why"; stated dietary/cuisine preferences override the local default.
 - Density follows the traveller's pace: calm → 1 stop per block, default → 1-2, adventurous → up to 3-4 where realistic. Every stop after the first needs "travel_time_from_previous" ("12 min walk"); the first uses "". Set "overpacked": true only when stops plus travel exceed time_range.
-- Stay consistent with the rest of the plan: same destination, origin, dates, traveler count, per-person budget, style and trip_preference.
+- Stay consistent with the rest of the plan: same destination, origin, dates, traveler count, per-person budget, style and trip_preference. If preferred_stay_types is non-empty, any stay_options you return must be of those property types and fit the stay budget.
 - Every stop you return carries "intensity" and "accessibility_risk" (tags only from: ${RISK_VOCAB}).
 - If a TRAVELLER PROFILE block is present it is a hard constraint: meals must match dietary.type and avoid every allergy; with mobility "wheelchair" or "limited-mobility" NEVER return a stop with intensity "high" or a conflicting accessibility_risk (wheelchair: uneven-terrain, long-walking-distance, climbing, stairs, water-based; limited-mobility: climbing, stairs, long-walking-distance) — substitute a comparable lower-risk activity in the same slot. Mark anything unverified as "wheelchair_accessible": "unconfirmed" with a "note" rather than silently including it. Sensory needs get a "note", not removal. With a pet, fill "pet_friendly" (true only when confident, else "unconfirmed" or false with a note), keep stays pet-friendly and mention pet policy in transport notes. Fill "accessibility_flags" on every stop you return when a profile is present.
 - TRANSPORT SWITCH requests ("the traveller selected <mode>"): return "transport" with the SAME available_modes set (refresh figures only if clearly wrong) and the recommended_mode/recommended_reason UNCHANGED, plus "budget_breakdown" whose "transit" reflects the selected mode's per-person round-trip cost (midpoint of its low/high) plus local getting-around costs, and "budget_total" if the total moved. Do not touch stays or itinerary.
