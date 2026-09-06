@@ -15,10 +15,11 @@ import {
   Trash2,
   AlertTriangle,
   Accessibility,
+  UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import { generateTripPlan, refineTripPlan } from "@/lib/trip-ai.functions";
-import { destinationVibe, formatINR, type TripPlan } from "@/lib/trip-planner";
+import { destinationVibe, formatINR, type TransportModeId, type TripPlan } from "@/lib/trip-planner";
 import { TripDashboard } from "@/components/TripDashboard";
 import { TravelerProfileEditor } from "@/components/TravelerProfileEditor";
 import { loadSavedTrips, removeSavedTrip, restoreSavedTrip, saveTrip, type SavedTrip } from "@/lib/saved-trips";
@@ -144,6 +145,15 @@ function Home() {
   const [sessionProfile, setSessionProfile] = useState<TravelerProfile | null | undefined>(undefined);
   const [profileOpen, setProfileOpen] = useState(false);
   const activeProfile = sessionProfile !== undefined ? sessionProfile : savedProfile;
+  // Starting point from the profile, with an optional "for this trip only" override that never
+  // touches the saved default. `null` override = explicitly "no default this time".
+  const [sessionOrigin, setSessionOrigin] = useState<string | null | undefined>(undefined);
+  const [originOverrideOpen, setOriginOverrideOpen] = useState(false);
+  const [originOverrideInput, setOriginOverrideInput] = useState("");
+  const defaultOrigin =
+    sessionOrigin !== undefined ? sessionOrigin : (activeProfile?.startingPoint ?? null);
+  const defaultOriginRef = useRef<string | null>(null);
+  defaultOriginRef.current = defaultOrigin;
   // Ref so async generation/refine always read the profile in effect at call time.
   const profileRef = useRef<TravelerProfile | null>(null);
   profileRef.current = activeProfile;
@@ -180,6 +190,7 @@ function Home() {
   const [refining, setRefining] = useState(false);
   const [refineError, setRefineError] = useState<string | null>(null);
   const [changeSummary, setChangeSummary] = useState<string | null>(null);
+  const [switchingMode, setSwitchingMode] = useState(false);
 
   const [trips, setTrips] = useState<SavedTrip[]>([]);
   const [tripsOpen, setTripsOpen] = useState(false);
@@ -289,6 +300,7 @@ function Home() {
         data: {
           prompt: text,
           origin: from,
+          defaultOrigin: from ? null : defaultOriginRef.current,
           preference: pref,
           travelerCount: count,
           startDate: dates.start,
@@ -525,6 +537,60 @@ function Home() {
     }
   };
 
+  /** Scoped refine: switch the travel mode, recalculate transit + budget, touch nothing else. */
+  const selectMode = async (mode: TransportModeId) => {
+    const basePlan = planRef.current;
+    if (!basePlan || refining || switchingMode || loading) return;
+    const current = basePlan.transport.selectedMode ?? basePlan.transport.recommendedMode;
+    const pick = basePlan.transport.modes.find((m) => m.mode === mode);
+    if (!pick || mode === current) return;
+    const requestId = ++refineSeq.current;
+    // Optimistic: highlight the mode and move "Transit" to its midpoint right away.
+    const mid = Math.round((pick.min + pick.max) / 2);
+    const optimistic: TripPlan = {
+      ...basePlan,
+      transport: { ...basePlan.transport, selectedMode: mode },
+      budgetBreakdown: basePlan.budgetBreakdown.map((b) =>
+        b.label === "Transit" ? { ...b, amount: mid } : b,
+      ),
+    };
+    setPlan(optimistic);
+    setSwitchingMode(true);
+    setRefineError(null);
+    try {
+      const { debugRaw: _d, ...snapshot } = basePlan as TripPlan & { debugRaw?: unknown };
+      const patch = await askRefine({
+        data: {
+          request: `Switch my travel mode to ${pick.label} and recalculate the transit cost and budget breakdown. Do not change the itinerary or stays.`,
+          scope: ["transport"],
+          stops: [],
+          selectedMode: mode,
+          plan: snapshot,
+          profile: toProfileWire(profileRef.current),
+        },
+      });
+      if (requestId !== refineSeq.current || planRef.current !== optimistic) return;
+      const next: TripPlan = { ...optimistic };
+      if (patch.transport) next.transport = { ...patch.transport, selectedMode: mode };
+      if (patch.budgetBreakdown) next.budgetBreakdown = patch.budgetBreakdown;
+      if (patch.budgetTotal) next.budget = patch.budgetTotal;
+      setPlan(next);
+      persist(next);
+      setChangeSummary(`Switched to ${pick.label.split(" (")[0]}`);
+      toast.success(`Travelling by ${pick.label.split(" (")[0]}`, { description: "Budget updated." });
+    } catch (err) {
+      if (requestId !== refineSeq.current) return;
+      console.error("[Explorion] transport switch failed:", err);
+      // Keep the optimistic local estimate but tell the traveller it wasn't confirmed.
+      persist(optimistic);
+      toast.error("Couldn't refresh the budget for that mode", {
+        description: "Showing a local estimate instead.",
+      });
+    } finally {
+      if (requestId === refineSeq.current) setSwitchingMode(false);
+    }
+  };
+
   const openSavedTrip = (trip: SavedTrip) => {
     setTripsOpen(false);
     if (trip.broken) return;
@@ -586,6 +652,18 @@ function Home() {
           </div>
         </div>
 
+        <nav aria-label="Account" className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setProfileOpen(true)}
+          aria-haspopup="dialog"
+          className={`flex items-center gap-2 rounded-full border px-3.5 py-2 text-xs transition hover:border-primary hover:text-primary ${
+            activeProfile ? "border-primary/60 text-foreground" : "border-border text-muted-foreground"
+          }`}
+        >
+          <UserRound className="size-3.5" /> My Profile
+          {activeProfile ? <span className="text-primary">✓</span> : null}
+        </button>
         <div className="relative" ref={tripsMenuRef}>
           <button
             type="button"
@@ -646,6 +724,7 @@ function Home() {
             </div>
           ) : null}
         </div>
+        </nav>
       </header>
 
       <main className="mx-auto max-w-6xl px-6 pb-24">
@@ -675,8 +754,40 @@ function Home() {
             />
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs text-muted-foreground">
-                {origin ? `Departing from ${origin} · ` : ""}Any budget you mention is
-                treated as per person
+                {origin ? (
+                  `Departing from ${origin} · `
+                ) : defaultOrigin ? (
+                  <>
+                    Departing from <span className="text-foreground">{defaultOrigin}</span>
+                    {sessionOrigin !== undefined ? " (this trip only)" : " (from your profile)"} ·{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOriginOverrideInput(defaultOrigin);
+                        setOriginOverrideOpen((v) => !v);
+                      }}
+                      className="underline underline-offset-4 transition hover:text-primary"
+                    >
+                      Change for this trip
+                    </button>{" "}
+                    ·{" "}
+                  </>
+                ) : sessionOrigin === null && activeProfile?.startingPoint ? (
+                  <>
+                    Starting point off for this trip ·{" "}
+                    <button
+                      type="button"
+                      onClick={() => setSessionOrigin(undefined)}
+                      className="underline underline-offset-4 transition hover:text-primary"
+                    >
+                      Use {activeProfile.startingPoint}
+                    </button>{" "}
+                    ·{" "}
+                  </>
+                ) : (
+                  ""
+                )}
+                Any budget you mention is treated as per person
               </p>
               <button
                 onClick={handlePlan}
@@ -695,6 +806,49 @@ function Home() {
               </button>
             </div>
           </div>
+
+          {originOverrideOpen ? (
+            <div className="mt-3 flex max-w-3xl flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <MapPin className="size-3.5 text-primary" /> Departure city for this trip only:
+              <input
+                value={originOverrideInput}
+                maxLength={80}
+                onChange={(e) => setOriginOverrideInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    const v = originOverrideInput.trim();
+                    setSessionOrigin(v || null);
+                    setOriginOverrideOpen(false);
+                  }
+                  if (e.key === "Escape") setOriginOverrideOpen(false);
+                }}
+                placeholder="e.g. Hyderabad"
+                className="rounded-xl border border-border bg-transparent px-3 py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const v = originOverrideInput.trim();
+                  setSessionOrigin(v || null);
+                  setOriginOverrideOpen(false);
+                }}
+                className="rounded-lg border border-primary px-3 py-1.5 font-semibold text-primary transition hover:bg-primary hover:text-primary-foreground"
+              >
+                Use for this trip
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSessionOrigin(null);
+                  setOriginOverrideOpen(false);
+                }}
+                className="underline underline-offset-4 transition hover:text-primary"
+              >
+                No default this trip
+              </button>
+              <span className="opacity-70">Your saved profile is not changed.</span>
+            </div>
+          ) : null}
 
           <div className="mt-5 flex flex-wrap gap-2">
             {CHIPS.map((chip) => (
@@ -963,6 +1117,8 @@ function Home() {
               selectedStay={selectedStay}
               onSelectStay={setSelectedStay}
               changeSummary={changeSummary}
+              onSelectMode={(m) => void selectMode(m)}
+              switchingMode={switchingMode}
             />
 
             <section className="panel-navy mt-10 space-y-4 p-6">
