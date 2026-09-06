@@ -95,6 +95,8 @@ export const emptyAccessibility = (): AccessibilityProfile => ({
 
 export const emptyDietary = (): DietaryProfile => ({ type: "none", allergies: [], notes: "" });
 
+export const emptyPet = (): PetProfile => ({ traveling: false, type: null, size: null, notes: "" });
+
 const cleanTag = (t: unknown): string | null => {
   if (typeof t !== "string") return null;
   const s = t.trim().replace(/\s+/g, " ").slice(0, MAX_TAG_LEN);
@@ -118,6 +120,12 @@ const cleanTags = (v: unknown, allowed?: readonly string[]): string[] => {
 
 const cleanNotes = (v: unknown) => (typeof v === "string" ? v.trim().slice(0, MAX_NOTES) : "");
 
+export const cleanOrigin = (v: unknown): string | null => {
+  if (typeof v !== "string") return null;
+  const s = v.trim().replace(/\s+/g, " ").slice(0, MAX_ORIGIN_LEN);
+  return s ? s : null;
+};
+
 /** True when the section carries no real information (treated as "not set"). */
 export const isEmptyAccessibility = (a: AccessibilityProfile | null | undefined) =>
   !a || (a.mobility === "none" && a.sensory.length === 0 && !a.serviceAnimal && !a.notes.trim());
@@ -125,8 +133,15 @@ export const isEmptyAccessibility = (a: AccessibilityProfile | null | undefined)
 export const isEmptyDietary = (d: DietaryProfile | null | undefined) =>
   !d || (d.type === "none" && d.allergies.length === 0 && !d.notes.trim());
 
+/** A pet section only counts when the traveller says the pet is coming along. */
+export const isEmptyPet = (p: PetProfile | null | undefined) => !p || !p.traveling;
+
 export const isEmptyProfile = (p: TravelerProfile | null | undefined) =>
-  !p || (isEmptyAccessibility(p.accessibility) && isEmptyDietary(p.dietary));
+  !p ||
+  (isEmptyAccessibility(p.accessibility) &&
+    isEmptyDietary(p.dietary) &&
+    isEmptyPet(p.pet) &&
+    !p.startingPoint);
 
 /** Deep-sanitises any stored/handed value into a TravelerProfile, or null if unusable/empty. */
 export function normalizeProfile(value: unknown): TravelerProfile | null {
@@ -158,12 +173,27 @@ export function normalizeProfile(value: unknown): TravelerProfile | null {
     if (isEmptyDietary(dietary)) dietary = null;
   }
 
-  if (!accessibility && !dietary) return null;
+  let pet: PetProfile | null = null;
+  if (p["pet"] && typeof p["pet"] === "object") {
+    const x = p["pet"] as Record<string, unknown>;
+    const traveling = x["traveling"] === true;
+    pet = {
+      traveling,
+      type: traveling && (PET_TYPES as readonly string[]).includes(x["type"] as string) ? (x["type"] as PetType) : null,
+      size: traveling && (PET_SIZES as readonly string[]).includes(x["size"] as string) ? (x["size"] as PetSize) : null,
+      notes: traveling ? cleanNotes(x["notes"]) : "",
+    };
+    if (isEmptyPet(pet)) pet = null;
+  }
+
+  const startingPoint = cleanOrigin(p["startingPoint"]);
+
+  if (!accessibility && !dietary && !pet && !startingPoint) return null;
   const updatedAt =
     typeof p["updatedAt"] === "string" && !Number.isNaN(Date.parse(p["updatedAt"]))
       ? p["updatedAt"]
       : new Date().toISOString();
-  return { accessibility, dietary, updatedAt };
+  return { startingPoint, accessibility, dietary, pet, updatedAt };
 }
 
 export function loadTravelerProfile(): TravelerProfile | null {
@@ -202,10 +232,11 @@ export function clearTravelerProfile(): void {
   }
 }
 
-/** Short human summary, e.g. "Vegetarian · Wheelchair accessible · No peanuts". */
+/** Short human summary, e.g. "From Chennai · Vegetarian · Wheelchair accessible · With a dog". */
 export function summarizeProfile(p: TravelerProfile | null): string[] {
   if (!p) return [];
   const parts: string[] = [];
+  if (p.startingPoint) parts.push(`From ${p.startingPoint}`);
   if (p.dietary) {
     if (p.dietary.type !== "none") parts.push(DIET_LABELS[p.dietary.type]);
     if (p.dietary.allergies.length)
@@ -230,6 +261,10 @@ export function summarizeProfile(p: TravelerProfile | null): string[] {
     )
       parts.push("Accessibility notes");
   }
+  if (p.pet?.traveling) {
+    const kind = p.pet.type ? PET_TYPE_LABELS[p.pet.type].split(" (")[0]!.toLowerCase() : "pet";
+    parts.push(`With a ${p.pet.size ? `${p.pet.size} ` : ""}${kind}`);
+  }
   return parts;
 }
 
@@ -237,11 +272,12 @@ export function summarizeProfile(p: TravelerProfile | null): string[] {
 export type TravelerProfileWire = {
   accessibility: { mobility: Mobility; sensory: string[]; service_animal: boolean; notes: string } | null;
   dietary: { type: DietType; allergies: string[]; notes: string } | null;
+  pet: { traveling: true; type: PetType | null; size: PetSize | null; notes: string } | null;
 };
 
 export function toProfileWire(p: TravelerProfile | null): TravelerProfileWire | null {
-  if (!p || isEmptyProfile(p)) return null;
-  return {
+  if (!p) return null;
+  const wire: TravelerProfileWire = {
     accessibility: p.accessibility
       ? {
           mobility: p.accessibility.mobility,
@@ -253,5 +289,11 @@ export function toProfileWire(p: TravelerProfile | null): TravelerProfileWire | 
     dietary: p.dietary
       ? { type: p.dietary.type, allergies: p.dietary.allergies, notes: p.dietary.notes }
       : null,
+    pet: p.pet?.traveling
+      ? { traveling: true, type: p.pet.type, size: p.pet.size, notes: p.pet.notes }
+      : null,
   };
+  // Starting point travels as the trip origin, not inside the profile block.
+  if (!wire.accessibility && !wire.dietary && !wire.pet) return null;
+  return wire;
 }
