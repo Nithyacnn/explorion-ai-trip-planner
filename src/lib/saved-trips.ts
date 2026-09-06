@@ -71,3 +71,18 @@ export function removeSavedTrip(id: string): SavedTrip[] {
     return loadSavedTrips();
   }
 }
+
+/** Re-inserts a previously deleted trip at its original position (undo). */
+export function restoreSavedTrip(entry: SavedTrip, index: number): SavedTrip[] {
+  if (entry.broken) return loadSavedTrips();
+  try {
+    const list = loadSavedTrips().filter((t) => t.id !== entry.id && !t.broken);
+    const at = Math.max(0, Math.min(index, list.length));
+    const next = [...list.slice(0, at), entry, ...list.slice(at)].slice(0, LIMIT);
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    return next;
+  } catch (error) {
+    console.error("[Explorion] restoring saved trip failed:", error);
+    return loadSavedTrips();
+  }
+}
