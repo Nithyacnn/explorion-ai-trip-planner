@@ -882,7 +882,7 @@ function Home() {
           ) : null}
 
           <div className="mt-5 flex flex-wrap gap-2">
-            {CHIPS.map((chip) => (
+            {(activeProfile?.startingPoint ? CHIPS_NO_ORIGIN : CHIPS_WITH_ORIGIN).map((chip) => (
               <button
                 key={chip}
                 onClick={() => setPrompt(chip)}
