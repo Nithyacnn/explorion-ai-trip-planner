@@ -108,7 +108,6 @@ const PREFERENCE_CHIPS = [
   "Take me somewhere unexplored",
   "Keep it calm, minimal travel between stops",
   "Make it adventurous",
-  "I have food or stay preferences",
 ];
 
 function Home() {
@@ -129,6 +128,41 @@ function Home() {
   const [askingPreference, setAskingPreference] = useState(false);
   const [preference, setPreference] = useState("");
   const [preferenceInput, setPreferenceInput] = useState("");
+
+  // Traveller profile: the saved one (localStorage) and an optional session-only override.
+  const [savedProfile, setSavedProfile] = useState<TravelerProfile | null>(null);
+  const [sessionProfile, setSessionProfile] = useState<TravelerProfile | null | undefined>(undefined);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const activeProfile = sessionProfile !== undefined ? sessionProfile : savedProfile;
+  // Ref so async generation/refine always read the profile in effect at call time.
+  const profileRef = useRef<TravelerProfile | null>(null);
+  profileRef.current = activeProfile;
+  useEffect(() => {
+    setSavedProfile(loadTravelerProfile());
+  }, []);
+
+  const handleProfileSave = (next: TravelerProfile | null, sessionOnly: boolean) => {
+    if (sessionOnly) {
+      setSessionProfile(next);
+      toast.success(next ? "Profile applied to this trip only" : "Profile turned off for this trip", {
+        description: "Your saved profile is unchanged.",
+      });
+    } else {
+      const stored = next ? saveTravelerProfile(next) : (clearTravelerProfile(), null);
+      setSavedProfile(stored);
+      setSessionProfile(undefined);
+      toast.success(stored ? "Travel profile saved" : "Travel profile cleared");
+    }
+    setProfileOpen(false);
+  };
+
+  const handleProfileClear = () => {
+    clearTravelerProfile();
+    setSavedProfile(null);
+    setSessionProfile(undefined);
+    setProfileOpen(false);
+    toast.success("Travel profile cleared", { description: "Nothing is stored on this device anymore." });
+  };
 
   const [marks, setMarks] = useState<Record<string, boolean>>({});
   const [selectedStay, setSelectedStay] = useState(0);
