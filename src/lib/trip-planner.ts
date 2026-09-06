@@ -4,12 +4,48 @@ export type AccessibilityFlags = {
   note?: string | undefined;
 };
 
+export type Intensity = "low" | "moderate" | "high";
+export const INTENSITIES: Intensity[] = ["low", "moderate", "high"];
+
+/** Controlled vocabulary the model must use for per-stop accessibility risks. */
+export const ACCESSIBILITY_RISKS = [
+  "uneven-terrain",
+  "long-walking-distance",
+  "climbing",
+  "stairs",
+  "water-based",
+  "crowded",
+  "loud",
+  "low-light",
+  "audio-only",
+  "visual-only",
+] as const;
+export type AccessibilityRisk = (typeof ACCESSIBILITY_RISKS)[number];
+
+export const RISK_LABELS: Record<AccessibilityRisk, string> = {
+  "uneven-terrain": "Uneven terrain",
+  "long-walking-distance": "Long walk",
+  climbing: "Climbing",
+  stairs: "Stairs",
+  "water-based": "Water-based",
+  crowded: "Crowded",
+  loud: "Loud",
+  "low-light": "Low light",
+  "audio-only": "Audio-only",
+  "visual-only": "Visual-only",
+};
+
 export type Stop = {
   activity: string;
   why?: string | undefined;
   travelTimeFromPrevious?: string | undefined;
   optional?: boolean | undefined;
   accessibilityFlags?: AccessibilityFlags | undefined;
+  intensity?: Intensity | undefined;
+  accessibilityRisk?: AccessibilityRisk[] | undefined;
+  petFriendly?: boolean | "unconfirmed" | undefined;
+  /** Set when the safety pass swapped out an unsafe activity; holds the original activity text. */
+  replacedForSafety?: string | undefined;
 };
 export type Slot = {
   label: string;
@@ -34,6 +70,8 @@ export type Transport = {
   modes: TransportMode[];
   recommendedMode: string;
   recommendedReason: string;
+  /** The mode the traveller picked; defaults to recommendedMode when absent. */
+  selectedMode?: string | undefined;
 };
 
 export type Stay = {
