@@ -172,12 +172,27 @@ function Home() {
   }, [tripsOpen]);
 
   const deleteSavedTrip = (id: string) => {
+    const removed = trips.find((t) => t.id === id);
+    const removedIndex = trips.findIndex((t) => t.id === id);
     const next = removeSavedTrip(id);
     setTrips(next);
     const wasOpen = currentId.current === id;
     if (wasOpen) currentId.current = undefined;
     toast.success("Trip removed from My Trips", {
       description: wasOpen ? "It's still on screen — refining it will save a fresh copy." : undefined,
+      ...(removed && !removed.broken
+        ? {
+            action: {
+              label: "Undo",
+              onClick: () => {
+                const restored = restoreSavedTrip(removed, removedIndex);
+                setTrips(restored);
+                if (wasOpen) currentId.current = removed.id;
+                toast.success("Trip restored");
+              },
+            },
+          }
+        : {}),
     });
   };
 
