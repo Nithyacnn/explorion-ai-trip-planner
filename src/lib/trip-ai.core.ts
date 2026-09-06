@@ -1108,14 +1108,60 @@ export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePa
     ? `\nTRANSPORT SWITCH: the traveller selected "${selected}" as their travel mode. Apply the TRANSPORT SWITCH rule (same modes, recommendation unchanged, recalculated budget_breakdown).`
     : "";
   const context = toRefineContext(data.plan);
-  const text = await callAi(
-    REFINE_SYSTEM,
-    `CURRENT PLAN (latest version, source of truth):\n${JSON.stringify(context)}${profileBlock(data.profile ?? undefined)}\n\nTRAVELLER'S CHANGE REQUEST: ${data.request}\n${scopeLine}${switchLine}\n\nReturn ONLY the raw JSON patch object.`,
-    "refine",
-    "Couldn't apply that change — try rephrasing.",
-  );
 
-  const raw = await parseWithRepair(refineSchema, text, "refine", normaliseRefine);
+  // A transport switch is a pure recalculation: transit moves to the tapped mode's midpoint and the
+  // total is re-summed. Compute that deterministically so the switch can never fail on AI drift —
+  // the model call only enriches (better transit figure / notes) and any failure falls back here.
+  const localSwitchPatch = (): RefinePatch | null => {
+    if (!selected) return null;
+    const baseModes = data.plan.transport.modes.filter((m): m is typeof m & { mode: TransportModeId } =>
+      ["flight", "train", "bus", "own_vehicle"].includes(m.mode),
+    );
+    const pick = baseModes.find((m) => m.mode === selected);
+    if (!pick) return null;
+    const modes = baseModes.map((m) => ({ ...m, label: MODE_LABELS[m.mode] ?? m.mode }));
+    const cur = Object.fromEntries(data.plan.budgetBreakdown.map((b) => [b.label.toLowerCase(), b.amount]));
+    const breakdown = toBreakdown(
+      {
+        stay: cur["stay"] ?? 0,
+        transit: Math.round((pick.min + pick.max) / 2),
+        meals: cur["meals"] ?? 0,
+        activities: cur["activities"] ?? 0,
+      },
+      data.plan.budget,
+    );
+    const total = breakdown.reduce((t, x) => t + x.amount, 0) || data.plan.budget;
+    return {
+      changed: ["transport", "budget"],
+      summary: `Switched to ${MODE_LABELS[selected].split(" (")[0]} — transit and budget recalculated.`,
+      transport: {
+        modes,
+        recommendedMode: data.plan.transport.recommendedMode || pickRecommended(modes, ""),
+        recommendedReason: data.plan.transport.recommendedReason,
+        selectedMode: selected,
+      },
+      budgetBreakdown: breakdown,
+      budgetTotal: total,
+    };
+  };
+  const fallback = localSwitchPatch();
+  if (selected && !fallback)
+    throw new Error("That travel mode isn't one of the options for this trip.");
+
+  let raw: z.infer<typeof refineSchema>;
+  try {
+    const text = await callAi(
+      REFINE_SYSTEM,
+      `CURRENT PLAN (latest version, source of truth):\n${JSON.stringify(context)}${profileBlock(data.profile ?? undefined)}\n\nTRAVELLER'S CHANGE REQUEST: ${data.request}\n${scopeLine}${switchLine}\n\nReturn ONLY the raw JSON patch object.`,
+      "refine",
+      "Couldn't apply that change — try rephrasing.",
+    );
+    raw = await parseWithRepair(refineSchema, text, "refine", normaliseRefine);
+  } catch (error) {
+    if (!fallback) throw error;
+    console.warn("[Explorion] transport switch: AI recalculation failed, using local figures:", error);
+    return fallback;
+  }
 
   const patch: RefinePatch = { changed: [...raw.changed], summary: raw.summary };
   const ensureChanged = (key: string) => {
