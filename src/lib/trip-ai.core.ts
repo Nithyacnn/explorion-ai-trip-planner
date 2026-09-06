@@ -1177,36 +1177,24 @@ export async function runRefineTripPlan(data: RefineInputType): Promise<RefinePa
     };
     ensureChanged("transport");
   }
-  if (selected) {
-    // A switch is deterministic on our side: the tapped mode must survive whatever the model did,
-    // the recommendation never moves, and the modes list falls back to the current one if the
-    // model dropped the selected mode.
-    const baseModes = data.plan.transport.modes.filter((m): m is typeof m & { mode: TransportModeId } =>
-      ["flight", "train", "bus", "own_vehicle"].includes(m.mode),
-    );
+  if (selected && fallback) {
+    // The tapped mode must survive whatever the model did and the recommendation never moves.
+    // If the model dropped the mode, or drifted the numbers, fall back to the local recalculation.
     const candidate = patch.transport?.modes.some((m) => m.mode === selected) ? patch.transport.modes : null;
-    const modes =
-      candidate ??
-      baseModes.map((m) => ({ ...m, label: MODE_LABELS[m.mode] ?? m.mode }));
-    if (modes.some((m) => m.mode === selected)) {
-      patch.transport = {
-        modes,
-        recommendedMode: data.plan.transport.recommendedMode || pickRecommended(modes, ""),
-        recommendedReason: data.plan.transport.recommendedReason,
-        selectedMode: selected,
+    patch.transport = {
+      ...fallback.transport!,
+      modes: candidate ?? fallback.transport!.modes,
+    };
+    ensureChanged("transport");
+    if (!raw.budget_breakdown) {
+      const pick = patch.transport.modes.find((m) => m.mode === selected)!;
+      const cur = Object.fromEntries(data.plan.budgetBreakdown.map((b) => [b.label.toLowerCase(), b.amount]));
+      raw.budget_breakdown = {
+        stay: cur["stay"] ?? 0,
+        transit: Math.round((pick.min + pick.max) / 2),
+        meals: cur["meals"] ?? 0,
+        activities: cur["activities"] ?? 0,
       };
-      ensureChanged("transport");
-      if (!raw.budget_breakdown) {
-        // Model skipped the numbers → recompute transit locally from the selected mode.
-        const pick = modes.find((m) => m.mode === selected)!;
-        const cur = Object.fromEntries(data.plan.budgetBreakdown.map((b) => [b.label.toLowerCase(), b.amount]));
-        raw.budget_breakdown = {
-          stay: cur["stay"] ?? 0,
-          transit: Math.round((pick.min + pick.max) / 2),
-          meals: cur["meals"] ?? 0,
-          activities: cur["activities"] ?? 0,
-        };
-      }
     }
   }
   if (raw.stay_options) {
