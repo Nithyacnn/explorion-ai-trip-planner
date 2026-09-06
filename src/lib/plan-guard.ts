@@ -2,7 +2,9 @@ import {
   ACCESSIBILITY_RISKS,
   INTENSITIES,
   MODE_LABELS,
+  STAY_TYPES,
   type AccessibilityRisk,
+  type StayType,
   type Intensity,
   type TripPlan,
   type TransportModeId,
@@ -194,6 +196,13 @@ export function normalizePlan(value: unknown): TripPlan | null {
     budgetBreakdown,
     stayOptions,
     tripPreference: optStr(p["tripPreference"]) ?? "",
+    stayTypes: [
+      ...new Set(
+        arr(p["stayTypes"]).filter((t): t is StayType =>
+          (STAY_TYPES as readonly string[]).includes(t as string),
+        ),
+      ),
+    ].slice(0, STAY_TYPES.length),
     international,
     visa: international ? visa : null,
     visaUnavailable: international && !visa,

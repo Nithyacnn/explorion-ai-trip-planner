@@ -60,6 +60,8 @@ const Input = z.object({
   defaultOrigin: z.string().trim().max(80).nullable().optional(),
   travelerCount: z.number().finite().min(1).max(MAX_TRAVELERS).nullable().optional(),
   preference: z.string().trim().max(600).nullable().optional(),
+  /** Property types the traveller picked before planning (empty = no preference). */
+  stayTypes: z.array(z.enum(STAY_TYPES)).max(STAY_TYPES.length).nullable().optional(),
   startDate: isoDate.nullable().optional(),
   endDate: isoDate.nullable().optional(),
   /** Client's local calendar date — the server clock may be in a different timezone. */
@@ -276,7 +278,8 @@ Rules:
 - transport.available_modes: ONLY include modes that genuinely exist for this origin→destination pair. Include "train"/"bus"/"own_vehicle" only when a real rail/road route exists (same country or connected region) AND the road/rail journey is under roughly 15-18 hours. For overseas or otherwise air-only routes, return ONLY the flight mode. Never fabricate a bus or train for a route that has none.
 - Each mode: low/high are realistic ROUND-TRIP per-person costs for that exact pair; "duration" is a human string like "12 hrs each way"; "notes" is one short practical line. For "own_vehicle", low/high estimate round-trip FUEL + TOLL cost for the route (not a ticket price).
 - recommended_mode must be one of the modes you returned. recommended_reason must weigh the traveller's stated style/preference and budget against cost AND duration — a genuine trade-off sentence (e.g. "flight recommended: saves 14 hours for only ₹2,000 more on a comfort-first trip"), never just "cheapest".
-- stay_options: exactly 3 realistic distinct properties that each fit within the stated budget, with name, type (hotel/homestay/resort/hostel), price_per_night, rating (0-5) and a one-line "why". Sort by rating descending.
+- stay_options: exactly 3 realistic distinct properties that each fit within the stated budget, with name, type (one of: hotel, apartment, resort, holiday home, villa, hostel, guest house, farm stay, bed and breakfast, lodge, homestay), price_per_night, rating (0-5) and a one-line "why". Sort by rating descending.
+- PREFERRED PROPERTY TYPES: when the traveller lists preferred property types, every stay_option must be one of those types, chosen so the nightly share fits budget_breakdown.stay ÷ duration_days. Spread the 3 options across the listed types where the destination genuinely offers them (e.g. one villa + two homestays). If a requested type is unrealistic for the destination or budget, say so in the "why" of the closest alternative and set agent_labels.stay accordingly — never invent a property of that type. When no types are listed, pick the best-value mix for the budget.
 - itinerary: exactly duration_days entries. Each day has FOUR blocks: early_morning (06:00 – 09:00), morning (09:00 – 13:00), afternoon (13:00 – 17:00), evening (17:00 – 22:00). Each block is an object with "stops", "time_range" and "overpacked".
 
 Full-day coverage (mandatory, all paces):
@@ -669,6 +672,13 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
         ? `\nNumber of travellers: ${Math.round(data.travelerCount)}. Use it as traveler_count and set needs_traveler_count to false.`
         : "";
 
+    const stayTypes = [...new Set(data.stayTypes ?? [])];
+    const stayTypesLine = stayTypes.length
+      ? `\nPreferred property types (stay_options must be drawn from these, matched to the budget): ${stayTypes
+          .map((t) => STAY_TYPE_LABELS[t])
+          .join(", ")}.`
+      : "";
+
     const preference = data.preference?.trim() ?? "";
     const preferenceLine = preference
       ? `\nTrip preference (free text, shape the whole plan around it): ${preference}`
@@ -771,6 +781,7 @@ export async function runGenerateTripPlan(data: GenerateInput): Promise<TripPlan
         budget: raw.agent_labels.budget_breakdown,
       },
       tripPreference: preference || raw.trip_preference?.trim() || "",
+      stayTypes,
       style: raw.style,
       vibe: raw.vibe,
       debugRaw: text,
